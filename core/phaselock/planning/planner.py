@@ -243,6 +243,7 @@ def plan_set(cards: list[TrackCard], duration_min: float, vibe: str | None = Non
             "energy": round(c.energy, 3),
             "mix_bpm": round(mix_bpm, 2),
             "stretch": round(mix_bpm / c.bpm, 4),
+            "lufs": c.lufs,
             "in_beat": in_i,
             "out_beat": out_i,
             "in_s": round(c.beats[in_i], 3),

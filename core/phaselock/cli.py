@@ -177,5 +177,40 @@ def _dt_now() -> str:
     return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+@main.command()
+@click.argument("set_json", type=click.Path(exists=True))
+@click.option("-o", "out_wav", default=None, help="Output WAV path.")
+@click.option("--mp3", "mp3_out", default=None, help="Also encode MP3 to path.")
+@click.option("--db", "db_path", default=None)
+@click.option("--cache", "cache_dir", default=None)
+def render(set_json: str, out_wav: str | None, mp3_out: str | None,
+           db_path: str | None, cache_dir: str | None) -> None:
+    """Render a set JSON to a continuous mix."""
+    import json as _json
+    import subprocess
+    from .rendering import engine
+
+    s = _json.loads(Path(set_json).read_text())
+    if out_wav is None:
+        renders = _REPO_ROOT / "renders"
+        renders.mkdir(parents=True, exist_ok=True)
+        stem = Path(set_json).stem
+        out_wav = renders / f"{stem}.wav"
+    conn = _db(db_path) if db_path or Path(_REPO_ROOT / "data" / "phaselock.db").exists() else None
+    cache = Path(cache_dir) if cache_dir else DEFAULT_CACHE
+
+    info = engine.render_set(
+        s, cache, out_wav, conn=conn,
+        progress=lambda m: click.echo(f"  {m}"),
+    )
+    click.echo(f"mix → {info['out']} ({info['duration_s']}s, "
+               f"{len(info['transitions'])} transitions)")
+    if mp3_out:
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", info["out"],
+                        "-codec:a", "libmp3lame", "-qscale:a", "2", mp3_out],
+                       check=True)
+        click.echo(f"mp3 → {mp3_out}")
+
+
 if __name__ == "__main__":
     main()

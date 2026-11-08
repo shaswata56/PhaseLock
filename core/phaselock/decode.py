@@ -45,24 +45,42 @@ def probe(path: str | Path) -> tuple[float, int, int]:
 
 def load_mono(path: str | Path, sr: int = ANALYSIS_SR) -> np.ndarray:
     """Decode to mono float32 at `sr`. Raises DecodeError on failure."""
+    y, _ = _load(path, sr, mono=True)
+    if y.size == 0:
+        raise DecodeError(f"empty audio: {path}")
+    return y
+
+
+def load_stereo(path: str | Path, sr: int = ANALYSIS_SR) -> np.ndarray:
+    """Decode to (2, n) float32 at `sr` (mono sources are duplicated)."""
+    y, _ = _load(path, sr, mono=False)
+    if y.ndim == 1:
+        y = np.stack([y, y])
+    elif y.shape[0] > 2:
+        y = y[:2]
+    if y.size == 0:
+        raise DecodeError(f"empty audio: {path}")
+    return y.astype(np.float32)
+
+
+def _load(path: str | Path, sr: int, mono: bool) -> tuple[np.ndarray, int]:
     import librosa
 
     p = Path(path)
     if p.suffix.lower() in {".m4a", ".aac", ".ogg", ".opus"}:
         # librosa/soundfile can't read these on Windows; pipe through ffmpeg.
         cmd = ["ffmpeg", "-v", "error", "-i", str(p), "-f", "f32le",
-               "-acodec", "pcm_f32le", "-ac", "1", "-ar", str(sr), "-"]
+               "-acodec", "pcm_f32le", "-ac", "1" if mono else "2",
+               "-ar", str(sr), "-"]
         raw = subprocess.run(cmd, capture_output=True, check=True).stdout
         if len(raw) % 4:
             raw = raw[: len(raw) - (len(raw) % 4)]
-        return np.frombuffer(raw, dtype=np.float32)
+        y = np.frombuffer(raw, dtype=np.float32)
+        return (y, sr)
     try:
-        y, _ = librosa.load(str(p), sr=sr, mono=True, res_type="soxr_hq")
+        return librosa.load(str(p), sr=sr, mono=mono, res_type="soxr_hq")
     except Exception as e:  # noqa: BLE001 - surface a single failure type
         raise DecodeError(f"could not decode {p}: {e}") from e
-    if y.size == 0:
-        raise DecodeError(f"empty audio: {p}")
-    return y.astype(np.float32)
 
 
 def scan_audio_files(root: str | Path, recursive: bool = True) -> list[Path]:

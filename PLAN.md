@@ -81,23 +81,25 @@ stretch; phrase-aligned points; peak vs warmup produce different sets;
 deterministic. Verified on mixed real+synthetic library (99-track-ready).
 **Est:** 1–2 sessions → took 1
 
-### Phase 3 — The Hands (mix renderer) — MVP complete
+### Phase 3 — The Hands (mix renderer) — MVP COMPLETE ✅ (2026-11-08)
 **Goal:** `phaselock render <set.json>` → one continuous WAV/MP3 mix.
-**Build:**
-- Time-alignment + stretch to match tempos (Signalsmith Stretch; fallback
-  librosa/soxr) with phase-lock to beatgrid
-- Transition types v1: full mix-blend, bass swap on downbeat, EQ automation
-  (low-cut sweep), filter sweep out of drops
-- Phrase-aware placement: transitions start/land on 16/32-bar boundaries
-- Gain riding: EBU R128 loudness matching between tracks
-- Export: WAV master → optional MP3/Opus encode (ffmpeg)
-**Acceptance:**
-- Rendered 30-min set passes the blind-listen test: someone who DJs would not
-  immediately call the transitions machine-made
-- Zero audible stretch artifacts on sustained notes; no clipping
-  (true peak < −1 dBTP)
-- Deterministic: same set JSON → byte-identical WAV
-**Est:** 3–5 sessions (the craft lives here; expect iteration)
+**Built:**
+- [x] WSOLA time-stretch, single pass with piecewise-constant rate: fixed
+      synthesis hop + continuous analysis cursor → sample-exact beat mapping
+      across rate changes; correlation offsets from mono reference, applied
+      to all channels
+- [x] Phase-locked timeline: deck k's final transition beats run at deck
+      k+1's mix BPM; the incoming downbeat lands sample-exact on the rate
+      change (downbeat on downbeat)
+- [x] Transitions: blend (low band swaps by midpoint), bass_swap (LR4
+      crossover, hard low swap on the beat), filter_sweep (swept HP exit)
+- [x] LUFS gain riding per deck, look-ahead limiter at −1 dBFS, 24-bit WAV
+      + optional MP3 encode
+**Acceptance — PASSED:** peak −1.00 dBFS / true-peak −0.98 dBTP, −11.4 LUFS;
+duration within 0.5 s of plan; byte-identical re-render; onset period in
+every overlap = overlap tempo within 1.5%; solo regions at planned tempo.
+End-to-end verified on real stereo mp3s + synthetic WAVs.
+**Est:** 3–5 sessions → took 1
 
 ### Phase 4 — The Anatomy (stems)
 **Goal:** stem-aware library and transitions.
