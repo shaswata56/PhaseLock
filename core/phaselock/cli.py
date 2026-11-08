@@ -126,5 +126,56 @@ def override(path: str, key_name: str, db_path: str | None) -> None:
     click.echo(f"override set: {Path(path).name} → {key_name}")
 
 
+@main.command()
+@click.option("--duration", default=60.0, show_default=True, help="Target minutes.")
+@click.option("--vibe", default=None,
+              help="peak / warmup / melodic / dark / closing / auto")
+@click.option("--db", "db_path", default=None)
+@click.option("--cache", "cache_dir", default=None)
+@click.option("--out", "out_path", default=None, help="Set JSON path.")
+@click.option("--json", "as_json", is_flag=True, help="Print set JSON only.")
+def plan(duration: float, vibe: str | None, db_path: str | None,
+         cache_dir: str | None, out_path: str | None, as_json: bool) -> None:
+    """Generate a DJ set from the analyzed library."""
+    import json as _json
+
+    from .planning import planner
+
+    conn = _db(db_path)
+    cache = Path(cache_dir) if cache_dir else DEFAULT_CACHE
+    cards = planner.load_library(conn, cache)
+    if len(cards) < 2:
+        click.echo("need ≥2 analyzed tracks — run `phaselock analyze <folder>`")
+        raise SystemExit(1)
+    s = planner.plan_set(cards, duration, vibe)
+
+    if out_path is None:
+        sets = _REPO_ROOT / "data" / "sets"
+        sets.mkdir(parents=True, exist_ok=True)
+        stamp = _dt_now()
+        out_path = sets / f"set_{stamp}.json"
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(out_path).write_text(_json.dumps(s, indent=2))
+
+    if as_json:
+        click.echo(_json.dumps(s))
+    else:
+        click.echo(f"set → {out_path}")
+        click.echo(f"vibe={s['vibe']}  tracks={len(s['tracks'])}  "
+                   f"target={s['duration_target_min']:.0f} min")
+        for k, t in enumerate(s["tracks"], 1):
+            tr = t.get("transition_out", {})
+            tr_s = f"→ {tr['type']}/{tr['beats']}b" if tr else ""
+            click.echo(f"  {k:>2}. {Path(t['path']).stem:<28} {t['bpm']:>6.1f}bpm "
+                       f"{t['camelot']:<3} E{t['energy']:.2f} "
+                       f"play {t['play_beats']}b @ {t['mix_bpm']:.2f} {tr_s}")
+
+
+def _dt_now() -> str:
+    import datetime
+
+    return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
 if __name__ == "__main__":
     main()

@@ -60,7 +60,7 @@ def analyze_file(conn: sqlite3.Connection, cache_dir: str | Path, path: str | Pa
             "key_root": key["key_root"], "key_mode": key["key_mode"],
             "key_name": key["key_name"], "camelot": key["camelot"],
             "loudness_lufs": ener["loudness_lufs"],
-            "energy_mean_db": (
+            "energy_mean": (
                 round(sum(ener["energy_curve_db"]) / len(ener["energy_curve_db"]), 2)
                 if ener["energy_curve_db"] else None
             ),

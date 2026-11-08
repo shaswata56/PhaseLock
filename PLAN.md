@@ -64,23 +64,22 @@ regression (kills ~±1% frame-snap quantization) and onset-envelope ACF
 cross-check with uniform-grid rebuild (fixes 4/3 metrical-level locks).
 Sub-frame BPM precision comes from the regression, not librosa's estimate.
 
-### Phase 2 — The Brain (set generation)
+### Phase 2 — The Brain (set generation) ✅ (2026-11-08)
 **Goal:** `phaselock plan --vibe "<desc>" --duration 60` → ordered set with
 transition points.
-**Build:**
-- Camelot harmonic-compatibility graph (±1 key steps, relative major/minor,
-  energy-jump rules)
-- Energy-arc profiler (opening → build → peak → landing) over the library
-- BPM chaining (monotone-ish drift, max ±3–4% stretch per track)
-- Transition point selection: last phrase boundary before a sensible mix-out
-  (32/16 bars), informed by energy curve
-- Output: set JSON (order, in/out points, transition types) + human-readable
-  setlist
-**Acceptance:**
-- 60-min set from a 50+ track library: zero key clashes (Camelot-compatible
-  throughout), BPM drift smooth (no jump > 4% at any transition)
-- Two different vibes from the same library produce meaningfully different sets
-**Est:** 1–2 sessions
+**Built:**
+- [x] Camelot compatibility graph (same/relative 1.0, adjacent 0.9,
+      same-tonic M↔m 0.55 "energy boost", else clash)
+- [x] Energy-arc profiler (library percentile + per-vibe arc shapes)
+- [x] BPM chaining via deterministic beam search: no clashes, drift ≤3%/step,
+      stretch ≤4% from native
+- [x] Phrase-aligned in/out points (16-beat grid anchored to downbeat phase)
+- [x] Transition typing (blend / bass_swap / filter_sweep) + set JSON +
+      readable setlist; vibe presets: auto/peak/warmup/melodic/dark/closing
+**Acceptance — PASSED:** camelot unit 10/10; zero clashes + bounded drift/
+stretch; phrase-aligned points; peak vs warmup produce different sets;
+deterministic. Verified on mixed real+synthetic library (99-track-ready).
+**Est:** 1–2 sessions → took 1
 
 ### Phase 3 — The Hands (mix renderer) — MVP complete
 **Goal:** `phaselock render <set.json>` → one continuous WAV/MP3 mix.
