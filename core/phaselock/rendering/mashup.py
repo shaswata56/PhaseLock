@@ -535,6 +535,8 @@ def _mix_sections(base_st, picks, rho_b, sections, bounds,
 
 def _edge_fades(seg: np.ndarray) -> None:
     n = seg.shape[-1]
+    if n < 8:
+        return
     xf = min(max(1, int(0.05 * SR)), n // 2)
     seg[:, :xf] *= np.linspace(0, 1, xf)
     seg[:, -xf:] *= np.linspace(1, 0, xf)
