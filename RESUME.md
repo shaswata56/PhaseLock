@@ -3,9 +3,9 @@
 *Live project state. Update at the end of every session. A new session starts
 by reading this file.*
 
-## Current state (2026-11-08, late night — v2.5)
+## Current state (2026-11-08, late night — v2.6)
 
-**Status: v1 + v2 + mashup + vault + listening rig complete.**
+**Status: v1 + v2 + reference-driven mashup rebuild complete.**
 
 **v2 delivered:**
 - Full real library: 110 tracks (98 of 99 Liked Songs; 1 unicode filename
@@ -64,6 +64,21 @@ Verified by listening: drop1−build1 **+16.7 dB**, drop1−break +15.3 dB,
 drops consistent ≤2.2 dB, 0 clicks; vision-model spectrogram read
 independently confirms (on-grid single kicks, drop energy jump, break
 sub dropout, vocal formants, no clipping).
+
+**v2.6 (reference-driven rebuild, after user's "not a good mix"):** user
+supplied the reference — Million Voices x Calling (Tiesto mashup). Torn
+down with the listening rig + yt-dlp + vision reads: two-act arc, rising
+builds, ONE breakdown with the vocal holding, final = single biggest
+moment (+9.4 dB over drop 1), continuous phrase-run topline, hard cuts.
+v4: `renders/mashup_bounce_iwytk_v4.mp3` (Bounce bed x I Want You To Know
+topline, 3:11). Renderer: run/solo/callback vocal roles, noise risers,
+enforced section ladder (post-limiter calibration — the limiter eats a
+preset ladder unevenly), strong-open window filter. Ladder verified = ref
+(drop1 −9.4, break −19.2, final 0), 0 clicks, LUFS −10. Tools:
+`core/tools/band_scan.py` + `band_diff.py` (any-track structure diffs
+vs a reference). Known residuals: internal window dips (source
+arrangement shows through), bass sits higher vs the ref's sub-focused
+master.
 
 **Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
 curves, preview 200/206, plan/edit, build).
