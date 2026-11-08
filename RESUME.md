@@ -3,9 +3,9 @@
 *Live project state. Update at the end of every session. A new session starts
 by reading this file.*
 
-## Current state (2026-11-08, late night — v2.6)
+## Current state (2026-11-08, deep night — v2.7)
 
-**Status: v1 + v2 + reference-driven mashup rebuild complete.**
+**Status: v1 + v2 + reference-mode mashup (v6) complete.**
 
 **v2 delivered:**
 - Full real library: 110 tracks (98 of 99 Liked Songs; 1 unicode filename
@@ -79,6 +79,22 @@ preset ladder unevenly), strong-open window filter. Ladder verified = ref
 vs a reference). Known residuals: internal window dips (source
 arrangement shows through), bass sits higher vs the ref's sub-focused
 master.
+
+**v2.7 (v6, after "not even close"):** vision-diffed my drop vs the ref
+TEXTURE — the real gap was groove/integration: smeared kicks, un-pumped
+sub wall, vocal pasted on top, stitching seams. v6 = `mashup_ref.py`:
+assemble the reference arc FROM THE SOURCE'S OWN PARTS (contiguous high
+runs; final = its biggest run, build = its own riser, break = the final
+beat-stripped), continuous native-rate slices (zero WSOLA on the bed),
+rebuilt beat-locked sidechain pump, glued topline (EQ + plate reverb,
+L2-normalized IR — RMS-norm IR = 235x convolution bomb), reference
+ladder down-only, pair picked by full-library template match (Find You x
+We'll Be Coming Back, 6A/6A, same scene). `renders/mashup_findyou_wbbc_
+v6.mp3`. Vision re-pass: crisp on-grid kicks, pumping sub, integrated
+vocal, clean downbeat slam, no seams. Debug trail banked: limiter was
+innocent (spy instrumentation found +43dBFS reverb spikes); dB sentinels
+must be None not >0; fixed-window part pickers straddle gaps — use
+contiguous runs.
 
 **Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
 curves, preview 200/206, plan/edit, build).
