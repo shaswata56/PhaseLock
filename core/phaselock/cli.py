@@ -325,6 +325,27 @@ def build(paths: tuple[str, ...], mins: str | None, transition: str,
 
 
 @main.command()
+@click.argument("audio", type=click.Path(exists=True))
+@click.option("-o", "--out", "out_png", default=None, help="Output PNG.")
+@click.option("--start", default=0.0, show_default=True, help="Window start (s).")
+@click.option("--dur", default=None, type=float, help="Window length (s).")
+@click.option("--title", default=None)
+def listen(audio: str, out_png: str | None, start: float, dur: float | None,
+           title: str | None) -> None:
+    """Render a listening view (spectrogram/waveform/bands) + notes."""
+    import json as _json
+
+    from .rendering import listen as listen_mod
+
+    if out_png is None:
+        out_png = str(_REPO_ROOT / "data" / "listen" /
+                      (Path(audio).stem + f"_{int(start)}s.png"))
+    notes = listen_mod.render_view(audio, out_png, start, dur, title)
+    click.echo(f"view → {out_png}")
+    click.echo(_json.dumps(notes, indent=2))
+
+
+@main.command()
 @click.argument("base", type=click.Path(exists=True))
 @click.argument("donors", nargs=-1, required=True, type=click.Path(exists=True))
 @click.option("--bpm", default=None, type=float, help="Mashup tempo (default: base's).")

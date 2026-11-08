@@ -25,21 +25,25 @@ VOCAL_OVER_DB = 3.0     # vocals sit this far above the bed's RMS
 
 # (name, bars, bed gains {drums,bass,other}, vocal slot)
 # vocal slot: (donor_index, "verse"|"hook") or None. "both" = top two donors.
+# Gains are real mixing moves: drops hit ~+4.5 dB in the bass, builds pull
+# the sub back and ramp the tops (tension), breaks clear the floor.
 SECTIONS = [
-    ("intro",  8, dict(drums=1.0, bass=1.0,  other=0.0), None),
-    ("A1",    16, dict(drums=1.0, bass=1.0,  other=1.0), (0, "verse")),
-    ("A2",    16, dict(drums=1.0, bass=1.0,  other=1.0), (1, "verse")),
-    ("build",  8, dict(drums=1.0, bass=1.0,  other=0.8, ramp=True), None),
-    ("drop1", 16, dict(drums=1.0, bass=1.1,  other=1.0), (0, "hook")),
-    ("break",  8, dict(drums=0.0, bass=0.0,  other=1.0), (1, "verse")),
-    ("A3",    16, dict(drums=1.0, bass=1.0,  other=1.0), (0, "verse")),
-    ("build2", 8, dict(drums=1.0, bass=1.0,  other=0.8, ramp=True), None),
-    ("drop2", 16, dict(drums=1.0, bass=1.1,  other=1.0), (1, "hook")),
-    ("break2", 8, dict(drums=0.0, bass=0.0,  other=1.0), None),
-    ("build3", 8, dict(drums=1.0, bass=1.0,  other=0.8, ramp=True), None),
-    ("drop3", 16, dict(drums=1.0, bass=1.1,  other=1.0), (0, "hook")),
-    ("outro", 16, dict(drums=1.0, bass=0.8,  other=0.3), None),
+    ("intro",  8, dict(drums=1.0,  bass=1.0,  other=0.0), None),
+    ("A1",    16, dict(drums=1.0,  bass=1.0,  other=1.0), (0, "verse")),
+    ("A2",    16, dict(drums=1.0,  bass=1.0,  other=1.0), (1, "verse")),
+    ("build",  8, dict(drums=1.0,  bass=0.8,  other=0.85, ramp=True), None),
+    ("drop1", 16, dict(drums=1.15, bass=1.7,  other=1.05), (0, "hook")),
+    ("break",  8, dict(drums=0.0,  bass=0.0,  other=1.0), (1, "verse")),
+    ("A3",    16, dict(drums=1.0,  bass=1.0,  other=1.0), (0, "verse")),
+    ("build2", 8, dict(drums=1.0,  bass=0.8,  other=0.85, ramp=True), None),
+    ("drop2", 16, dict(drums=1.15, bass=1.7,  other=1.05), (1, "hook")),
+    ("break2", 8, dict(drums=0.0,  bass=0.0,  other=1.0), None),
+    ("build3", 8, dict(drums=1.0,  bass=0.8,  other=0.85, ramp=True), None),
+    ("drop3", 16, dict(drums=1.15, bass=1.7,  other=1.05), (0, "hook")),
+    ("outro", 16, dict(drums=1.0,  bass=0.7,  other=0.3), None),
 ]
+
+OTHER_HP_HZ = 90.0   # melody stem leaves sub space to the bass stem
 
 
 def _warp(channels: list[np.ndarray], ratio: float, n_out: int,
@@ -185,19 +189,14 @@ def render_mashup(base_path: str, donor_paths: list[str], out_wav: str,
                       if (i - phase_b) % 16 == 0 and i >= phase_b]
         if len(phrase_idx) > 2:
             anchor = int(round(beats_b[phrase_idx[2]] * SR))
-    bed = np.zeros((2, n_out), dtype=np.float64)
-    for sname in ("drums", "bass", "other"):
-        if sname not in base_st:
-            raise ValueError(f"base missing {sname} stem")
-        warped = _warp(list(base_st[sname]), rho_b, n_out, src_start=anchor)
-        bed += warped
-
     # uniform section grid on the mix tempo (sections are whole phrases,
     # and the anchor guarantees phrase alignment of the bed content)
     bounds = _section_bounds(sections, beats_b, phase_b, rho_b, n_out, mix_bpm)
-    _apply_bed_automation(bed, sections, bounds, mix_bpm)
+    picks = _plan_bed_windows(base_st, base_side, sections)
+    bed = _mix_sections(base_st, picks, rho_b, sections, bounds)
     report(f"bed: {Path(base_path).name} @ {mix_bpm:.1f} bpm, "
-           f"{len(sections)} sections, {total_bars} bars")
+           f"{len(sections)} sections, {total_bars} bars "
+           f"(drops on the source's biggest moments)")
 
     # guest vocals
     placements = []
@@ -267,27 +266,128 @@ def _section_bounds(sections, beats, phase, rho: float, n_out: int, bpm: float):
     return bounds
 
 
-def _apply_bed_automation(bed: np.ndarray, sections, bounds, bpm: float) -> None:
-    """Per-section gain envelopes with 30 ms edge crossfades and build ramps."""
+def _plan_bed_windows(base_st, base_side, sections) -> list[float]:
+    """Pick which part of the base each section reads from.
+
+    A continuous read would put our drops on the source's breakdowns.
+    Instead: rank the base's phrases by sub energy; the mashup's drops get
+    the source's biggest moments, A-sections get verses, breaks get
+    breakdowns. Deterministic, phrase-anchored.
+    """
+    beats = base_side.get("beats", [])
+    phase = base_side.get("downbeat_phase")
+    if not beats or phase is None:
+        return [0.0] * len(sections)
+    phrases = [beats[i] for i in range(len(beats))
+               if (i - phase) % 16 == 0 and i >= phase]
+    bass = base_st["bass"].mean(axis=0) if base_st["bass"].ndim > 1 \
+        else base_st["bass"]
     sr = SR
+    total = bass.size / sr
+
+    def score(t0: float, L: float) -> float:
+        a, b = int(t0 * sr), min(int((t0 + L) * sr), bass.size)
+        if b - a < sr // 2:
+            return -99.0
+        return float(np.sqrt((bass[a:b] ** 2).mean()))
+
+    # candidate runs: (score, start) per needed window length
+    needed = [(name, bars) for name, bars, _g, _s in sections]
+    phrase_len = (phrases[1] - phrases[0]) if len(phrases) > 1 else 7.4
+    cand: dict[float, list[tuple[float, float]]] = {}
+    for _, bars in needed:
+        L = bars // 4 * phrase_len
+        if L not in cand:
+            runs = []
+            for t0 in phrases:
+                if t0 + L <= total + 0.5:
+                    runs.append((score(t0, L), t0))
+            runs.sort(key=lambda r: (-r[0], r[1]))
+            cand[L] = runs
+
+    def take(lengths: list[float], exclude: list[tuple[float, float]],
+             top: bool, count: int) -> list[float]:
+        """Grab `count` non-overlapping runs, best (or worst) first."""
+        out = []
+        for L in lengths:
+            pool = cand.get(L, [])
+            ordered = pool if top else pool[::-1]
+            for sc, t0 in ordered:
+                if len(out) >= count:
+                    break
+                if any(abs(t0 - e0) < max(L, eL) - phrase_len * 0.99
+                       for e0, eL in exclude):
+                    continue
+                out.append(t0)
+                exclude.append((t0, L))
+                break
+            if len(out) >= count:
+                break
+        while len(out) < count:
+            out.append(phrases[0])
+        return out
+
+    excl: list[tuple[float, float]] = []
+    drop_L = [16 // 4 * phrase_len] * 3
+    a_L = [16 // 4 * phrase_len] * 3
+    small_L = [8 // 4 * phrase_len] * 6
+    outro_L = [16 // 4 * phrase_len]
+
+    drops = take(drop_L, excl, top=True, count=3)
+    asecs = take(a_L, excl, top=True, count=3)
+    smalls = take(small_L, excl, top=False, count=6)
+    outros = take(outro_L, excl, top=False, count=1)
+
+    # map sections to picks by role
+    picks: list[float] = []
+    di = ai = si_ = oi = 0
+    for name, bars, _g, _s in sections:
+        if name.startswith("drop"):
+            picks.append(drops[di]); di += 1
+        elif name.startswith("A"):
+            picks.append(asecs[ai]); ai += 1
+        elif name == "outro":
+            picks.append(outros[oi]); oi += 1
+        else:  # intro / build / break
+            picks.append(smalls[si_]); si_ += 1
+    return picks
+
+
+def _mix_sections(base_st, picks, rho_b, sections, bounds) -> np.ndarray:
+    """Per-section: warp each stem from its picked source window and mix
+    with per-stem section gains + envelopes (30 ms edges, build ramps)."""
+    from scipy.signal import butter, sosfiltfilt
+
+    sr = SR
+    n_out = int(bounds[-1] * sr) + SR
+    bed = np.zeros((2, n_out), dtype=np.float64)
+    xf = max(1, int(XFADE_S * sr))
+    # melody stem leaves the sub to the bass stem (pre-warp, once)
+    hp = butter(4, OTHER_HP_HZ, btype="high", fs=sr, output="sos")
+    other_src = np.stack([sosfiltfilt(hp, ch) for ch in base_st["other"]])
+    stems = {"drums": base_st["drums"], "bass": base_st["bass"],
+             "other": other_src}
     for si, (name, bars, gains, slot) in enumerate(sections):
         t0, t1 = bounds[si], bounds[si + 1]
-        i0, i1 = int(t0 * sr), int(t1 * sr)
-        n = i1 - i0
+        i0, n = int(t0 * sr), int(t1 * sr) - int(t0 * sr)
         if n <= 0:
             continue
         env = np.ones(n)
-        xf = max(1, int(XFADE_S * sr))
-        ramp = gains.get("ramp", False)
         if name == "intro":
             env = np.linspace(0.0, 1.0, n)
         elif name == "outro":
             env = np.linspace(1.0, 0.0, n)
-        elif ramp:  # build: energy rises into the drop
-            env = 0.72 + 0.28 * np.linspace(0.0, 1.0, n) ** 1.5
         env[:xf] *= np.linspace(0.0, 1.0, xf)
         env[-xf:] *= np.linspace(1.0, 0.0, xf)
-        bed[:, i0:i1] *= env
+        src_start = int(round(picks[si] * sr))
+        for sname, src in stems.items():
+            w = _warp(list(src), rho_b, n + SR, src_start=src_start)[:, :n]
+            g_env = env * float(gains.get(sname, 1.0))
+            if gains.get("ramp") and sname in ("drums", "other"):
+                rise = np.linspace(0.0, 1.0, n) ** 1.4
+                g_env = g_env * (0.82 + 0.18 * rise)
+            bed[:, i0 : i0 + n] += w * g_env
+    return bed
 
 
 def _edge_fades(seg: np.ndarray) -> None:
