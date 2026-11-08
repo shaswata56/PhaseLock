@@ -3,33 +3,31 @@
 *Live project state. Update at the end of every session. A new session starts
 by reading this file.*
 
-## Current state (2026-11-08, evening — v2 in flight)
+## Current state (2026-11-08, night — v2 COMPLETE)
 
-**Status: v1 complete (all 7 phases + gates); v2 nearly done.** Same day.
+**Status: v1 (all 7 phases) + v2 complete. Showpiece mix rendered.**
 
-**v2 additions:**
-- Full real library analyzed: 110 tracks (98 of 99 Liked Songs — one unicode
-  filename lost in copy; 10 synthetic; 2 stem tests; 15 duplicate
-  real_sample rows removed).
-- New transitions: drum_drop (drum-stem build → hard drop on the downbeat)
-  and acapella_overlay (vocals stem over a blend), both with graceful
-  degradation; planner assigns them when the incoming track has stems.
-- Booth v2: track detail (canvas waveform + energy curve + downbeat ticks),
-  preview streaming with Range support (DB-validated), transition-type
-  editing + save. `phaselock curves PATH` CLI backs the detail view.
-- v2 gates + full regression green.
+**v2 delivered:**
+- Full real library: 110 tracks (98 of 99 Liked Songs; 1 unicode filename
+  lost in copy; 15 duplicate real_sample rows removed).
+- New transitions: drum_drop (drum-stem build → hard drop on the downbeat),
+  acapella_overlay (vocals stem over a blend); graceful degradation; planner
+  assigns by stems availability. Booth v2: detail view (waveform + energy +
+  downbeat ticks), Range-streaming preview, transition editing.
+- **Showcase mix rendered:** `renders/showcase_60min.wav` (+ 70 MB MP3) —
+  55.5 min, 20 real tracks, Rasputin → Forbidden Voices, Camelot
+  11A→8B→3A, energy 0.23→0.99, 19 transitions (3 drum_drop, 6
+  acapella_overlay), **11 real stem swaps**, −1.00 dBFS, −11.2 LUFS,
+  finite, deterministic. 12 tracks stem-separated (~36 min CPU).
 
-**In flight:** Demucs separating 12 tracks of the showcase set
-(`data/stems_job.log`); then re-plan (upgrades transition types) and render
-the 60-min all-real-music showcase (`data/sets/showcase_real.json` —
-Rasputin → Forbidden Voices, Camelot 11A→8B→3A, energy 0.23→0.99).
+**Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
+curves, preview 200/206, plan/edit).
 
-**The booth:** rebuilt + restarted, http://localhost:3100 (new build live).
+## Next steps (v3 ideas in PLAN.md — nothing pending)
 
-## Next steps
-
-- Render showcase set (WAV + MP3) once stems finish; listen
-- v3 ideas in PLAN.md (live dual-deck is the big one)
+- **Listen to `renders/showcase_60min.mp3`** — the blind-listen gate is the
+  one human check left
+- Live dual-deck Web Audio booth; MusicGen textures; Opus stems; GPU batch
 
 **What exists:**
 - **Analysis core** (`core/phaselock/`): BPM (sub-frame via beat-index

@@ -198,7 +198,10 @@ gates; full regression (`core/tests/test_*.py`) is green.
       ticks), per-track preview streaming (Range/206, DB-validated paths),
       per-transition type editing with save
 - [x] v2 transition gates + full regression green
-- [ ] Showcase 60-min all-real-music set rendered with stems (running)
+- [x] Showcase 60-min all-real-music set rendered with stems:
+      55.5 min, 20 tracks (Rasputin → Forbidden Voices, 11A→8B→3A,
+      energy 0.23→0.99), 19 transitions (3 drum_drop, 6 acapella_overlay),
+      11 real stem swaps, −1.00 dBFS / −11.2 LUFS; WAV + MP3 in renders/
 
 ## v3 ideas (unplanned)
 
