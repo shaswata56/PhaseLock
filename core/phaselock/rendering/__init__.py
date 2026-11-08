@@ -1,1 +1,1 @@
-from . import engine, wsola  # noqa: F401
+from . import engine, mashup, wsola  # noqa: F401

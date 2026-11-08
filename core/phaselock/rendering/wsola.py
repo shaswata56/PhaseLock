@@ -58,7 +58,10 @@ def wsola(ref: np.ndarray, channels: list[np.ndarray],
             a = base + delta
             o = f * HOP
             for ci, ch in enumerate(ch_p):
-                outs[ci][o : o + FRAME] += ch[a : a + FRAME] * win
+                seg = ch[a : a + FRAME]
+                if seg.size < FRAME:  # short read at the source edge: zero-fill
+                    seg = np.pad(seg, (0, FRAME - seg.size))
+                outs[ci][o : o + FRAME] += seg * win
             wsum[o : o + FRAME] += win
             template = ref_p[a + HOP : a + HOP + HOP].copy()
             c += HOP / r

@@ -325,6 +325,36 @@ def build(paths: tuple[str, ...], mins: str | None, transition: str,
 
 
 @main.command()
+@click.argument("base", type=click.Path(exists=True))
+@click.argument("donors", nargs=-1, required=True, type=click.Path(exists=True))
+@click.option("--bpm", default=None, type=float, help="Mashup tempo (default: base's).")
+@click.option("-o", "--out", "out_wav", default=None)
+@click.option("--db", "db_path", default=None)
+@click.option("--cache", "cache_dir", default=None)
+def mashup(base: str, donors: tuple[str, ...], bpm: float | None,
+           out_wav: str | None, db_path: str | None, cache_dir: str | None) -> None:
+    """Mashup: BASE instrumental bed + DONOR vocal layers, ~5 min."""
+    import subprocess
+
+    from .rendering import mashup as mashup_mod
+
+    conn = _db(db_path)
+    cache = Path(cache_dir) if cache_dir else DEFAULT_CACHE
+    if out_wav is None:
+        renders = _REPO_ROOT / "renders"
+        out_wav = renders / f"mashup_{Path(base).stem}_{'_'.join(Path(d).stem for d in donors)}.wav"
+    info = mashup_mod.render_mashup(
+        base, list(donors), out_wav, conn, cache, bpm=bpm,
+        progress=lambda m: click.echo(f"  {m}"))
+    click.echo(f"mashup → {info['out']} ({info['duration_s']}s @ {info['bpm']} bpm, "
+               f"{len(info['placements'])} vocal placements)")
+    mp3 = str(Path(out_wav).with_suffix(".mp3"))
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", info["out"],
+                    "-codec:a", "libmp3lame", "-qscale:a", "2", mp3], check=True)
+    click.echo(f"mp3 → {mp3}")
+
+
+@main.command()
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--db", "db_path", default=None)
 @click.option("--cache", "cache_dir", default=None)
