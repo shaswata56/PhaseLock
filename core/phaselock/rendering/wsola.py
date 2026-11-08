@@ -20,11 +20,15 @@ COARSE = 16           # coarse search step, then refined ±COARSE
 
 
 def wsola(ref: np.ndarray, channels: list[np.ndarray],
-          regions: list[tuple[int, int, float]]) -> tuple[list[np.ndarray], list[int]]:
-    """Stretch `channels` over `regions`. Returns (channels, frames_per_region).
+          regions: list[tuple[int, int, float]],
+          deltas: list[int] | None = None
+          ) -> tuple[list[np.ndarray], list[int], list[int]]:
+    """Stretch `channels` over `regions`.
 
-    Deck sample length ≈ sum(frames)*HOP + HOP; the output time of each
-    region boundary is frames_before*HOP exactly — use it for placement.
+    Returns (channels, frames_per_region, deltas). Deck sample length ≈
+    sum(frames)*HOP + HOP; each region boundary lands at frames_before*HOP
+    exactly — use it for placement. Pass `deltas` from a previous call to
+    force the identical time-warp on different audio (stem decks).
     """
     frames_per_region = [int(round((e - s) * r / HOP)) for s, e, r in regions]
     total_frames = sum(frames_per_region)
@@ -40,12 +44,17 @@ def wsola(ref: np.ndarray, channels: list[np.ndarray],
     c = float(regions[0][0]) + pad
     template: np.ndarray | None = None
     f = 0
+    deltas_used: list[int] = []
     for (s, _e, r), n_frames in zip(regions, frames_per_region):
         if f > 0:  # snap the cursor to the region boundary exactly
             c = float(s) + pad
         for _ in range(n_frames):
             base = int(round(c))
-            delta = _search_delta(ref_p, base, template)
+            if deltas is not None:
+                delta = deltas[f]
+            else:
+                delta = _search_delta(ref_p, base, template)
+            deltas_used.append(delta)
             a = base + delta
             o = f * HOP
             for ci, ch in enumerate(ch_p):
@@ -57,7 +66,7 @@ def wsola(ref: np.ndarray, channels: list[np.ndarray],
 
     norm = np.where(wsum > 1e-3, 1.0 / np.maximum(wsum, 1e-9), 0.0)
     outs = [o * norm for o in outs]
-    return outs, frames_per_region
+    return outs, frames_per_region, deltas_used
 
 
 def _search_delta(ref_p: np.ndarray, base: int,

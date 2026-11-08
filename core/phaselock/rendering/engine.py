@@ -88,9 +88,19 @@ def _sweep_hp(x: np.ndarray, sr: int, n_chunks: int,
 
 
 def apply_transition(a: np.ndarray, b: np.ndarray, kind: str, sr: int,
-                     beats: int) -> np.ndarray:
-    """Mix the overlap of outgoing (a) and incoming (b) decks."""
+                     beats: int, bass_a: np.ndarray | None = None,
+                     bass_b: np.ndarray | None = None) -> np.ndarray:
+    """Mix the overlap of outgoing (a) and incoming (b) decks.
+
+    bass_a/bass_b are warped bass STEM decks (same time-warp as a/b); when
+    present, a bass_swap exchanges the actual bass lines instead of the
+    lowpassed full mixes — no drum bleed rides the swap.
+    """
     l = min(a.shape[-1], b.shape[-1])
+    if bass_a is not None:
+        l = min(l, bass_a.shape[-1])
+    if bass_b is not None:
+        l = min(l, bass_b.shape[-1])
     if l % 2:
         l -= 1
     a, b = a[..., :l].astype(np.float64), b[..., :l].astype(np.float64)
@@ -103,17 +113,21 @@ def apply_transition(a: np.ndarray, b: np.ndarray, kind: str, sr: int,
         swept = _sweep_hp(a, sr, beats)
         return swept * ca + b * cb
 
-    a_low, b_low = _low_band(a, sr), _low_band(b, sr)
-    a_high, b_high = a - a_low, b - b_low
+    a_high, b_high = a - _low_band(a, sr), b - _low_band(b, sr)
     if kind == "bass_swap":
-        low = np.concatenate([a_low[..., :mid], b_low[..., mid:]], axis=-1)
+        if bass_a is not None and bass_b is not None:
+            ba = _low_band(bass_a[..., :l].astype(np.float64), sr)
+            bb = _low_band(bass_b[..., :l].astype(np.float64), sr)
+        else:
+            ba, bb = _low_band(a, sr), _low_band(b, sr)
+        low = np.concatenate([ba[..., :mid], bb[..., mid:]], axis=-1)
     else:  # blend — lows complete the swap by the midpoint
         half = mid
         la = np.concatenate([np.linspace(1, 0, half), np.zeros(l - half)])
         lb = np.concatenate([np.linspace(0, 1, half), np.ones(l - half)])
         if a.ndim == 2:
             la, lb = la[None, :], lb[None, :]
-        low = a_low * la + b_low * lb
+        low = _low_band(a, sr) * la + _low_band(b, sr) * lb
     return low + a_high * ca + b_high * cb
 
 
@@ -128,10 +142,12 @@ def _limiter(x: np.ndarray, sr: int) -> np.ndarray:
 
 
 def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
-               conn=None, progress=None) -> dict:
+               conn=None, progress=None, use_stems: bool = True) -> dict:
     """Render a set (as produced by planning.planner.plan_set) to a WAV."""
+    from .. import stems as stems_mod
+
     tracks = set_dict["tracks"]
-    decks, starts, ovs = [], [], []
+    decks, bass_decks, starts, ovs = [], [], [], []
 
     def report(msg: str) -> None:
         if progress:
@@ -142,6 +158,7 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
         sc = _sidecar_for(t, conn, cache_dir)
         beats = sc["beats"] if sc else None
         T = t.get("transition_out", {}).get("beats", 0)
+        kind = t.get("transition_out", {}).get("type", "")
         in_i = _sample_of(beats, t, "in_s", sr)
         out_i = _sample_of(beats, t, "out_s", sr)
         if T and beats:
@@ -155,12 +172,29 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
             regions.append((split_i, out_i, r_ov))
 
         ref = y.mean(axis=0)
-        chans, frames = wsola(ref, [y[0], y[1]], regions)
+        chans, frames, deltas = wsola(ref, [y[0], y[1]], regions)
         deck = np.stack(chans)
-        deck *= _lufs_gain(t.get("lufs"))
+        gain = _lufs_gain(t.get("lufs"))
+        deck *= gain
         _fade(deck, int(sr * 0.002), True)
         _fade(deck, int(sr * 0.01), False)
         decks.append(deck)
+
+        # bass stem deck (same warping) for either side of a bass_swap
+        bass = None
+        prev_kind = (tracks[k - 1].get("transition_out", {}).get("type", "")
+                     if k > 0 else "")
+        if use_stems and conn is not None and "bass_swap" in (kind, prev_kind):
+            fp = stems_mod.fingerprint_for(conn, t["path"])
+            if fp:
+                st = stems_mod.load_stems(Path(cache_dir) / "stems", fp, names=("bass",))
+                if st is not None and abs(st["sr"] - sr) < 1:
+                    bs = st["bass"].astype(np.float32)
+                    if bs.ndim == 1:
+                        bs = np.stack([bs, bs])
+                    bch, _, _ = wsola(ref, [bs[0], bs[1]], regions, deltas=deltas)
+                    bass = np.stack(bch) * gain
+        bass_decks.append(bass)
 
         if k == 0:
             starts.append(0)
@@ -171,24 +205,31 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
             ov_len = deck.shape[-1] - frames[0] * HOP
             ovs.append({
                 "k": k, "start": ov_start, "len": ov_len, "beats": T,
-                "type": t["transition_out"]["type"],
-                "bpm": tracks[k + 1]["mix_bpm"],
+                "type": kind, "bpm": tracks[k + 1]["mix_bpm"],
             })
-        report(f"deck {k + 1}/{len(tracks)}: {Path(t['path']).name}")
+        report(f"deck {k + 1}/{len(tracks)}: {Path(t['path']).name}"
+               + (" (+stems)" if bass is not None else ""))
 
     total = starts[-1] + decks[-1].shape[-1]
     master = np.zeros((2, total))
     for start, deck in zip(starts, decks):
         master[:, start : start + deck.shape[-1]] += deck
 
+    stem_transitions = 0
     for ov in ovs:
         a_deck, b_deck = decks[ov["k"]], decks[ov["k"] + 1]
         a0 = ov["start"] - starts[ov["k"]]
         l = min(ov["len"], a_deck.shape[-1] - a0, b_deck.shape[-1])
         a_seg = a_deck[:, a0 : a0 + l]
         b_seg = b_deck[:, :l]
+        ba = bass_decks[ov["k"]]
+        bb = bass_decks[ov["k"] + 1]
+        if ov["type"] == "bass_swap" and ba is not None and bb is not None:
+            stem_transitions += 1
         master[:, ov["start"] : ov["start"] + l] = apply_transition(
-            a_seg, b_seg, ov["type"], sr, ov["beats"]
+            a_seg, b_seg, ov["type"], sr, ov["beats"],
+            bass_a=(ba[:, a0 : a0 + l] if ba is not None else None),
+            bass_b=(bb[:, :l] if bb is not None else None),
         )
         report(f"transition {ov['k'] + 1}: {ov['type']} over {ov['beats']} beats")
 
@@ -201,6 +242,7 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
     sf.write(str(out_wav), master.T, sr, subtype="PCM_24")
     return {
         "out": str(out_wav), "sr": sr, "duration_s": round(total / sr, 2),
+        "stem_transitions": stem_transitions,
         "transitions": [{"type": o["type"], "start_s": round(o["start"] / sr, 2)}
                         for o in ovs],
     }

@@ -183,8 +183,9 @@ def _dt_now() -> str:
 @click.option("--mp3", "mp3_out", default=None, help="Also encode MP3 to path.")
 @click.option("--db", "db_path", default=None)
 @click.option("--cache", "cache_dir", default=None)
+@click.option("--no-stems", is_flag=True, help="Never use cached stems.")
 def render(set_json: str, out_wav: str | None, mp3_out: str | None,
-           db_path: str | None, cache_dir: str | None) -> None:
+           db_path: str | None, cache_dir: str | None, no_stems: bool) -> None:
     """Render a set JSON to a continuous mix."""
     import json as _json
     import subprocess
@@ -200,16 +201,50 @@ def render(set_json: str, out_wav: str | None, mp3_out: str | None,
     cache = Path(cache_dir) if cache_dir else DEFAULT_CACHE
 
     info = engine.render_set(
-        s, cache, out_wav, conn=conn,
+        s, cache, out_wav, conn=conn, use_stems=not no_stems,
         progress=lambda m: click.echo(f"  {m}"),
     )
     click.echo(f"mix → {info['out']} ({info['duration_s']}s, "
-               f"{len(info['transitions'])} transitions)")
+               f"{len(info['transitions'])} transitions, "
+               f"{info.get('stem_transitions', 0)} stem swaps)")
     if mp3_out:
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", info["out"],
                         "-codec:a", "libmp3lame", "-qscale:a", "2", mp3_out],
                        check=True)
         click.echo(f"mp3 → {mp3_out}")
+
+
+@main.command()
+@click.argument("paths", nargs=-1, required=True, type=click.Path(exists=True))
+@click.option("--db", "db_path", default=None)
+@click.option("--cache", "cache_dir", default=None)
+@click.option("--device", default=None, help="cpu / cuda")
+def stems(paths: tuple[str, ...], db_path: str | None, cache_dir: str | None,
+          device: str | None) -> None:
+    """Separate tracks into stems (cached under data/stems)."""
+    from . import stems as stems_mod
+
+    conn = _db(db_path)
+    cache = Path(cache_dir) if cache_dir else DEFAULT_CACHE
+    root = cache / "stems"
+    for p in paths:
+        rp = str(Path(p).resolve())
+        row = conn.execute(
+            "SELECT file_size, mtime FROM tracks WHERE path = ?", (rp,)
+        ).fetchone()
+        if row is None:
+            click.echo(f"skip {p}: not in library — run `phaselock analyze` first")
+            continue
+        fp = stems_mod.fingerprint_for(conn, rp)
+        if not stems_mod.is_stale(root, fp, row["file_size"], row["mtime"]):
+            click.echo(f"fresh  {Path(p).name}")
+            continue
+        try:
+            d = stems_mod.separate(rp, root, fp, row["file_size"], row["mtime"],
+                                   device=device)
+            click.echo(f"stems  {Path(p).name} → {d}")
+        except Exception as e:  # noqa: BLE001
+            click.echo(f"ERROR  {Path(p).name}: {e}")
 
 
 if __name__ == "__main__":

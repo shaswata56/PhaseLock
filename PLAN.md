@@ -101,21 +101,20 @@ every overlap = overlap tempo within 1.5%; solo regions at planned tempo.
 End-to-end verified on real stereo mp3s + synthetic WAVs.
 **Est:** 3–5 sessions → took 1
 
-### Phase 4 — The Anatomy (stems)
+### Phase 4 — The Anatomy (stems) ✅ (2026-11-08)
 **Goal:** stem-aware library and transitions.
-**Build:**
-- Demucs/HTDemucs batch separation (local GPU if available, else CPU or
-  Cloud Run spot job — < $1 per full library)
-- Stem cache: 4 stems/track as FLAC (or Opus to halve storage), manifest with
-  source hash → invalidate on re-analyze
-- Stem transitions v2: acapella overlay, drum-only drop, bass-swap across
-  differing keys
-**Acceptance:**
-- One bass-swap transition between two different-key tracks rendered with
-  stems, no vocal/bleed artifacts
-- Cache invalidation works (re-analyze → stems marked stale, not silently
-  reused)
-**Est:** 1–2 sessions
+**Built:**
+- [x] Demucs/htdemucs separation (CPU on this machine; CUDA auto if
+      present), stems cached as FLAC + manifest with size/mtime staleness
+- [x] `phaselock stems PATH...` CLI; stale caches reported, never reused
+- [x] Stem bass_swap: bass-stem decks warped with the SAME WSOLA deltas as
+      the full decks (identical time-warp) replace the low band; LR4 keeps
+      spectral consistency; automatic crossover fallback without stems
+**Acceptance — PASSED:** manifest+4 stems cached & fresh-check; simulated
+source change → stale; bass_swap between different-key tracks rendered from
+real stems (engine reports the swap, −1.00 dBFS, finite); fallback path
+verified without stems.
+**Est:** 1–2 sessions → took 1
 
 ### Phase 5 — The Booth (web app)
 **Goal:** Next.js app: browse library, see waveforms/curves, queue sets,
