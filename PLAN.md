@@ -223,3 +223,16 @@ gates; full regression (`core/tests/test_*.py`) is green.
 - MusicGen/Riffusion transition textures
 - Opus stem cache option; Cloud Run GPU batch separation
 - Library dedupe by audio fingerprint, not path
+
+## v2.2 — manual mix studio (2026-11-08, on user request)
+
+- [x] "any track with any track, any length": MANUAL SET panel — add from
+      library (+), reorder, per-track minutes (0.5–15), default transition
+      type/beats; build → existing setlist editor (per-join type changes) →
+      render. Compatibility shown as badges (harmonic/compatible/bold/clash
+      + bpm-gap) — warnings, never blocks.
+- [x] `phaselock build P1 P2… --mins --type --beats` CLI; wider manual
+      tempo limits (±8% stretch, ±6%/join drift; extreme gaps clamp and warn)
+- [x] Gates: clash pair builds+renders with warning; minutes respected
+      (phrase-rounded); 11% tempo gap clamps. Live-verified via booth API
+      (hand-picked pair → render → stream).

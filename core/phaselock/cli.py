@@ -277,6 +277,54 @@ def tracks(db_path: str | None) -> None:
 
 
 @main.command()
+@click.argument("paths", nargs=-1, required=True, type=click.Path(exists=True))
+@click.option("--mins", default=None,
+              help="Per-track minutes, comma-separated (e.g. 3,2.5,4).")
+@click.option("--type", "transition", default="blend", show_default=True,
+              type=click.Choice(["blend", "bass_swap", "filter_sweep",
+                                 "drum_drop", "acapella_overlay"]))
+@click.option("--beats", default=16, show_default=True, type=int)
+@click.option("--db", "db_path", default=None)
+@click.option("--cache", "cache_dir", default=None)
+@click.option("--out", "out_path", default=None)
+@click.option("--json", "as_json", is_flag=True)
+def build(paths: tuple[str, ...], mins: str | None, transition: str,
+          beats: int, db_path: str | None, cache_dir: str | None,
+          out_path: str | None, as_json: bool) -> None:
+    """Build a set from hand-picked tracks, any order, any lengths."""
+    import json as _json
+
+    from .planning import planner
+
+    conn = _db(db_path)
+    cache = Path(cache_dir) if cache_dir else DEFAULT_CACHE
+    cards = planner.load_library(conn, cache)
+    minutes = [float(x) for x in mins.split(",")] if mins else None
+    s = planner.build_manual_set(cards, list(paths), minutes=minutes,
+                                 transition=transition, beats=max(2, beats))
+
+    if out_path is None:
+        sets = _REPO_ROOT / "data" / "sets"
+        sets.mkdir(parents=True, exist_ok=True)
+        out_path = sets / f"manual_{_dt_now()}.json"
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(out_path).write_text(_json.dumps(s, indent=2))
+
+    if as_json:
+        click.echo(_json.dumps(s))
+        return
+    click.echo(f"set → {out_path}")
+    for w in s.get("warnings", []):
+        click.echo(f"  ! {w}")
+    total = sum(t["play_beats"] * 60 / t["mix_bpm"] for t in s["tracks"])
+    for t in s["tracks"][:-1]:
+        tr = t.get("transition_out", {})
+        if tr:
+            total -= tr["beats"] * 60 / s["tracks"][s["tracks"].index(t) + 1]["mix_bpm"]
+    click.echo(f"{len(s['tracks'])} tracks, ~{total / 60:.0f} min")
+
+
+@main.command()
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--db", "db_path", default=None)
 @click.option("--cache", "cache_dir", default=None)

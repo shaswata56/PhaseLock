@@ -30,8 +30,16 @@ corrected (up to ±209 ms), 9 stem swaps, −1.00 dBFS. Alignment gates
 (test_alignment.py: 100 ms grid-error → 0.3 ms residual) + full regression
 green. The v1 mix stays at `renders/showcase_60min.mp3` for A/B.
 
+**v2.2 (manual mix studio, on user request "mix any with any for anytime"):**
+booth MANUAL SET panel — `+` adds any library track, reorder, per-track
+minutes 0.5–15, transition type + beats, compat badges (clash/bpm-gap warn,
+never block) → build → per-join type editing → render. Backed by
+`phaselock build` CLI + `planner.build_manual_set` (manual tempo limits ±8%
+stretch / ±6% drift, clamps + warns on extreme gaps). Gates
+`test_build.py` pass; live-verified hand-picked pair → render → stream.
+
 **Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
-curves, preview 200/206, plan/edit).
+curves, preview 200/206, plan/edit, build).
 
 ## Next steps (v3 ideas in PLAN.md — nothing pending)
 

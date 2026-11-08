@@ -374,6 +374,96 @@ def plan_set(cards: list[TrackCard], duration_min: float, vibe: str | None = Non
     }
 
 
+def build_manual_set(cards: list[TrackCard], order: list[str],
+                     minutes: list[float] | None = None,
+                     transition: str = "blend", beats: int = 16) -> dict:
+    """Build a set from a hand-picked order — any track with any track.
+
+    No ordering constraints: clashes and big tempo gaps produce warnings,
+    never refusals (the human chose). Tempo chain uses wider manual limits;
+    the renderer's alignment pass demotes joins reality can't hold.
+    """
+    by_path = {c.path: c for c in cards}
+    seq: list[TrackCard] = []
+    for p in order:
+        c = by_path.get(str(Path(p).resolve()))
+        if c is None:
+            raise ValueError(f"not in analyzed library: {p}")
+        seq.append(c)
+    if len(seq) < 2:
+        raise ValueError("need at least 2 tracks")
+    minutes = minutes or []
+    if len(minutes) != len(seq):
+        minutes = [minutes[0] if minutes else DEFAULT_TRACK_MIN] * len(seq)
+
+    warnings: list[str] = []
+    entries: list[dict] = []
+    running = seq[0].bpm
+    stretch_manual, drift_manual = 0.08, 0.06
+
+    for k, (c, mins) in enumerate(zip(seq, minutes)):
+        if k == 0:
+            mix_bpm = c.bpm
+        else:
+            prev = seq[k - 1]
+            score = compat(prev.camelot, c.camelot)
+            if score <= 0:
+                warnings.append(
+                    f"join {k}: key clash {prev.camelot}→{c.camelot} "
+                    f"({Path(prev.path).stem} → {Path(c.path).stem})")
+            gap = abs(c.bpm - prev.bpm) / prev.bpm
+            if gap > 0.06:
+                warnings.append(
+                    f"join {k}: tempo gap {gap:.0%} "
+                    f"({prev.bpm:.1f} → {c.bpm:.1f})")
+            blend = 0.5 * running + 0.5 * c.bpm
+            lo = max(c.bpm * (1 - stretch_manual), running * (1 - drift_manual))
+            hi = min(c.bpm * (1 + stretch_manual), running * (1 + drift_manual))
+            if lo <= hi:
+                mix_bpm = float(np.clip(blend, lo, hi))
+            else:  # extreme gap: hug the previous tempo, stretch absorbs it
+                mix_bpm = float(np.clip(c.bpm, running * (1 - drift_manual),
+                                        running * (1 + drift_manual)))
+                warnings.append(
+                    f"join {k}: stretch beyond ±{stretch_manual:.0%} unavoidable")
+            running = mix_bpm
+
+        play_sec = max(0.5, float(mins)) * 60.0
+        in_i, out_i, _ = _pick_in_out(c, play_sec)
+        if in_i is None:
+            raise ValueError(f"no usable phrase window in {c.path}")
+
+        entry = {
+            "path": c.path,
+            "bpm": round(c.bpm, 2),
+            "key": c.key_name,
+            "camelot": c.camelot,
+            "energy": round(c.energy, 3),
+            "mix_bpm": round(mix_bpm, 2),
+            "stretch": round(mix_bpm / c.bpm, 4),
+            "lufs": c.lufs,
+            "in_beat": in_i,
+            "out_beat": out_i,
+            "in_s": round(c.beats[in_i], 3),
+            "out_s": round(c.beats[out_i], 3),
+            "play_beats": out_i - in_i,
+            "manual": True,
+        }
+        if k < len(seq) - 1:
+            entry["transition_out"] = {"type": transition, "beats": beats}
+        entries.append(entry)
+
+    return {
+        "version": SET_VERSION,
+        "created": _dt.datetime.now().isoformat(timespec="seconds"),
+        "duration_target_min": round(sum(minutes), 2),
+        "vibe": "manual",
+        "arc": [],
+        "tracks": entries,
+        "warnings": warnings,
+    }
+
+
 def _arc_peak(n: int, v: dict) -> int:
     return max(1, min(n - 1, round((n - 1) * v["peak_at"])))
 

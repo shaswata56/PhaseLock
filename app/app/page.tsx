@@ -41,9 +41,32 @@ const TRANSITIONS = [
   "drum_drop",
   "acapella_overlay",
 ];
+const BEAT_CHOICES = [8, 16, 32, 64];
 const name = (p: string) => p.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? p;
 const fmtDur = (s: number | null) =>
   s == null ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+// Camelot compatibility, same rules as the planner
+function compat(a?: string | null, b?: string | null): number | null {
+  if (!a || !b) return null;
+  const pa = /^(\d+)([AB])$/.exec(a.toUpperCase());
+  const pb = /^(\d+)([AB])$/.exec(b.toUpperCase());
+  if (!pa || !pb) return null;
+  const na = +pa[1], nb = +pb[1];
+  const d = Math.min(Math.abs(na - nb), 12 - Math.abs(na - nb));
+  if (d === 0) return 1;
+  if (d === 1) return 0.9;
+  if (d === 3 && pa[2] !== pb[2]) return 0.55;
+  return 0;
+}
+
+function compatBadge(v: number | null) {
+  if (v == null) return null;
+  if (v >= 1) return <span className="text-emerald-400">harmonic</span>;
+  if (v >= 0.9) return <span className="text-sky-300">compatible</span>;
+  if (v > 0) return <span className="text-amber-300">bold</span>;
+  return <span className="text-red-400 font-semibold">clash</span>;
+}
 
 /* ---------- waveform + energy detail view ---------- */
 
@@ -170,6 +193,56 @@ export default function Booth() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Track | null>(null);
   const [edits, setEdits] = useState<Record<number, string>>({});
+  const [manual, setManual] = useState<{ path: string; mins: number }[]>([]);
+  const [mType, setMType] = useState("blend");
+  const [mBeats, setMBeats] = useState(16);
+  const [building, setBuilding] = useState(false);
+  const [buildWarn, setBuildWarn] = useState<string[]>([]);
+
+  const manualTrack = (p: string) => tracks.find((t) => t.path === p);
+  const addToManual = (t: Track) => {
+    setManual((m) =>
+      m.some((x) => x.path === t.path) ? m : [...m, { path: t.path, mins: 3 }],
+    );
+  };
+  const moveManual = (i: number, dir: -1 | 1) =>
+    setManual((m) => {
+      const j = i + dir;
+      if (j < 0 || j >= m.length) return m;
+      const n = [...m];
+      [n[i], n[j]] = [n[j], n[i]];
+      return n;
+    });
+
+  const buildManual = async () => {
+    if (manual.length < 2) return;
+    setBuilding(true);
+    setError(null);
+    setBuildWarn([]);
+    try {
+      const r = await fetch("/api/build", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          paths: manual.map((m) => m.path),
+          mins: manual.map((m) => m.mins),
+          type: mType,
+          beats: mBeats,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "build failed");
+      setSet(j.set);
+      setSetPath(j.setPath);
+      setEdits({});
+      setJob(null);
+      setBuildWarn(j.set.warnings ?? []);
+    } catch (e: any) {
+      setError(String(e));
+    } finally {
+      setBuilding(false);
+    }
+  };
 
   const load = () =>
     fetch("/api/tracks")
@@ -371,6 +444,18 @@ export default function Booth() {
                       selected?.path === t.path ? "bg-zinc-800/60" : ""
                     }`}
                   >
+                    <td className="w-6 px-1 py-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          addToManual(t);
+                        }}
+                        title="add to manual set"
+                        className="rounded px-1 text-zinc-500 hover:bg-emerald-900/60 hover:text-emerald-300"
+                      >
+                        +
+                      </button>
+                    </td>
                     <td className="max-w-[220px] truncate px-2 py-1 text-zinc-300">
                       {name(t.path)}
                     </td>
@@ -399,6 +484,139 @@ export default function Booth() {
           {selected && (
             <TrackDetail track={selected} onClose={() => setSelected(null)} />
           )}
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
+            <h2 className="mb-3 text-sm font-semibold tracking-wide text-zinc-300">
+              MANUAL SET — any track, any order, any length
+            </h2>
+            {manual.length === 0 && (
+              <p className="text-xs text-zinc-500">
+                add tracks from the library with <span className="text-emerald-400">+</span>
+                , then build &amp; render.
+              </p>
+            )}
+            <ol className="space-y-1">
+              {manual.map((m, i) => {
+                const t = manualTrack(m.path);
+                const prev = i > 0 ? manualTrack(manual[i - 1].path) : null;
+                const c = prev ? compat(prev.camelot, t?.camelot) : null;
+                const gap =
+                  prev && t && prev.bpm && t.bpm
+                    ? Math.abs(t.bpm - prev.bpm) / prev.bpm
+                    : 0;
+                return (
+                  <li key={m.path}>
+                    {prev && (
+                      <div className="flex items-center gap-2 py-0.5 pl-3 font-mono text-[10px] text-zinc-500">
+                        <span>{compatBadge(c)}</span>
+                        {gap > 0.06 && (
+                          <span className="text-amber-300">
+                            bpm gap {(gap * 100).toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1.5 font-mono text-xs">
+                      <span className="w-4 text-right text-zinc-600">{i + 1}</span>
+                      <span className="flex-1 truncate text-zinc-300">
+                        {name(m.path)}
+                      </span>
+                      {t?.bpm != null && (
+                        <span className="tabular-nums text-zinc-500">
+                          {t.bpm.toFixed(1)}
+                        </span>
+                      )}
+                      {t?.camelot && (
+                        <span className="text-emerald-400/80">{t.camelot}</span>
+                      )}
+                      <input
+                        type="number"
+                        min={0.5}
+                        max={15}
+                        step={0.5}
+                        value={m.mins}
+                        onChange={(e) =>
+                          setManual((ms) =>
+                            ms.map((x, j) =>
+                              j === i
+                                ? { ...x, mins: Number(e.target.value) || 3 }
+                                : x,
+                            ),
+                          )
+                        }
+                        className="w-14 rounded bg-zinc-950 px-1 py-0.5 text-right tabular-nums text-zinc-300 ring-1 ring-zinc-800 focus:ring-emerald-600"
+                      />
+                      <span className="text-zinc-600">min</span>
+                      <button
+                        onClick={() => moveManual(i, -1)}
+                        className="px-1 text-zinc-500 hover:text-emerald-300"
+                        aria-label="up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={() => moveManual(i, 1)}
+                        className="px-1 text-zinc-500 hover:text-emerald-300"
+                        aria-label="down"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        onClick={() =>
+                          setManual((ms) => ms.filter((_, j) => j !== i))
+                        }
+                        className="px-1 text-zinc-500 hover:text-red-400"
+                        aria-label="remove"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            {manual.length >= 2 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <select
+                  value={mType}
+                  onChange={(e) => setMType(e.target.value)}
+                  className="rounded bg-zinc-950 px-2 py-1 text-xs text-zinc-200 ring-1 ring-zinc-800"
+                >
+                  {TRANSITIONS.map((v) => (
+                    <option key={v}>{v}</option>
+                  ))}
+                </select>
+                <select
+                  value={mBeats}
+                  onChange={(e) => setMBeats(Number(e.target.value))}
+                  className="rounded bg-zinc-950 px-2 py-1 text-xs text-zinc-200 ring-1 ring-zinc-800"
+                >
+                  {BEAT_CHOICES.map((v) => (
+                    <option key={v} value={v}>
+                      {v} beats
+                    </option>
+                  ))}
+                </select>
+                <span className="font-mono text-xs text-zinc-500">
+                  ~{manual.reduce((a, m) => a + (m.mins || 0), 0).toFixed(1)} min
+                </span>
+                <button
+                  onClick={buildManual}
+                  disabled={building}
+                  className="ml-auto rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-emerald-500 disabled:opacity-40"
+                >
+                  {building ? "building…" : "build set"}
+                </button>
+              </div>
+            )}
+            {buildWarn.length > 0 && (
+              <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-amber-300">
+                {buildWarn.map((w) => (
+                  <li key={w}>⚠ {w}</li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
             <h2 className="mb-3 text-sm font-semibold tracking-wide text-zinc-300">
