@@ -202,6 +202,20 @@ gates; full regression (`core/tests/test_*.py`) is green.
       55.5 min, 20 tracks (Rasputin → Forbidden Voices, 11A→8B→3A,
       energy 0.23→0.99), 19 transitions (3 drum_drop, 6 acapella_overlay),
       11 real stem swaps, −1.00 dBFS / −11.2 LUFS; WAV + MP3 in renders/
+- [x] **v2.1 — real-music mixing quality pass** (after user listen feedback):
+      diagnosis showed 17/19 joins carried drift/phase risk (live recording
+      drifting 1.4%, joins 60–209 ms off beat-phase). Fixes: local-tempo
+      overlap regions (both decks run at the join BPM, each stretched by
+      its own local estimate), measured onset-comb phase alignment at every
+      join (kick-band, spike-sharpened, ±0.45-beat correction, residual
+      verify + demotion to filter_sweep when unrecoverable), 16-beat blends
+      (32 for builds), drum_drop now sweeps the outgoing out during the
+      build, acapella ride tamed (1.25×, ducked bed). Showcase v2: 18/19
+      joins corrected (deltas up to ±209 ms), mix went 3 drum_drop/6
+      acapella/5 blend/5 sweep → 1/3/7/8 (tight moves only where reality
+      supports them). `renders/showcase_60min_v2.mp3`. New alignment gates
+      (100 ms grid-error injection → 0.3 ms residual; drifting-track
+      generator) + full regression green.
 
 ## v3 ideas (unplanned)
 

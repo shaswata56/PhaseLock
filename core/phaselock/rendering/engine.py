@@ -114,13 +114,14 @@ def apply_transition(a: np.ndarray, b: np.ndarray, kind: str, sr: int,
         if drums_b is None:
             kind = "filter_sweep"  # graceful degrade
         else:
-            # 16-beat drum build over the outgoing track, then the drop:
-            # incoming full slams in on the downbeat, outgoing dies.
+            # DJ-style build: high-pass the outgoing wider and wider while
+            # the incoming drums rise, then the drop — incoming full slams
+            # in on the downbeat, outgoing dies.
+            swept = _sweep_hp(a, sr, beats, f_lo=150.0, f_hi=2000.0)
             ramp = np.linspace(0.0, 1.0, mid)
             if a.ndim == 2:
                 ramp = ramp[None, :]
-            pre = a[..., :mid] * (1.0 - 0.35 * ramp) + \
-                drums_b[..., :mid].astype(np.float64) * ramp
+            pre = swept[..., :mid] + drums_b[..., :mid].astype(np.float64) * ramp
             slam = b[..., mid:].copy()
             atk = max(1, int(0.003 * sr))
             env = np.linspace(0.0, 1.0, atk)
@@ -139,11 +140,15 @@ def apply_transition(a: np.ndarray, b: np.ndarray, kind: str, sr: int,
                            bass_a, bass_b)
         if vocals_b is None:
             return base
+        # vocal rides the pre-mid window: gentler boost, blend ducks under it
         w = np.zeros(l)
         w[:mid] = np.sin(np.linspace(0.0, np.pi, mid))
+        duck = np.ones(l)
+        duck[:mid] = 1.0 - 0.3 * np.sin(np.linspace(0.0, np.pi, mid))
         if base.ndim == 2:
             w = w[None, :]
-        return base + vocals_b[..., :l].astype(np.float64) * w * 1.6
+            duck = duck[None, :]
+        return base * duck + vocals_b[..., :l].astype(np.float64) * w * 1.25
 
     if kind == "bass_swap":
         if bass_a is not None and bass_b is not None:
@@ -187,11 +192,24 @@ def _limiter(x: np.ndarray, sr: int) -> np.ndarray:
 
 def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
                conn=None, progress=None, use_stems: bool = True) -> dict:
-    """Render a set (as produced by planning.planner.plan_set) to a WAV."""
+    """Render a set (as produced by planning.planner.plan_set) to a WAV.
+
+    Real recordings drift and humanize against their global beatgrid, so
+    every overlap is rate-adapted to the LOCAL tempo at the join (both decks
+    run at the join BPM, each stretched by its own local estimate) and the
+    incoming deck is phase-shifted by the measured onset-alignment offset
+    (±0.45 beat). Joins that stay misaligned — or tracks that drift hard —
+    are demoted to masking transitions (filter_sweep) instead of tight ones.
+    """
     from .. import stems as stems_mod
+    from .align import join_offset, local_beat_period
 
     tracks = set_dict["tracks"]
     decks, stem_decks, starts, ovs = [], [], [], []
+    drifts: list[dict] = []
+    align_info, demotions = [], []
+    DRIFT_TIGHT = 0.006   # above this, tight moves are unsafe
+    DRIFT_ANY = 0.012     # above this, only masking transitions
 
     def report(msg: str) -> None:
         if progress:
@@ -201,21 +219,44 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
         y = decode.load_stereo(t["path"], sr)
         sc = _sidecar_for(t, conn, cache_dir)
         beats = sc["beats"] if sc else None
-        T = t.get("transition_out", {}).get("beats", 0)
+        T_prev = (tracks[k - 1].get("transition_out", {}).get("beats", 0)
+                  if k > 0 else 0)
+        T_out = t.get("transition_out", {}).get("beats", 0)
         kind = t.get("transition_out", {}).get("type", "")
-        in_i = _sample_of(beats, t, "in_s", sr)
-        out_i = _sample_of(beats, t, "out_s", sr)
-        if T and beats:
-            split_i = int(round(beats[t["out_beat"] - T] * sr))
-        else:
-            split_i = out_i
-        r_solo = t["bpm"] / t["mix_bpm"]
-        regions = [(in_i, split_i, r_solo)]
-        if T and k + 1 < len(tracks):
-            r_ov = t["bpm"] / tracks[k + 1]["mix_bpm"]
-            regions.append((split_i, out_i, r_ov))
+        in_smp = _sample_of(beats, t, "in_s", sr)
+        out_smp = _sample_of(beats, t, "out_s", sr)
 
         ref = y.mean(axis=0)
+        p_glob = 60.0 / t["bpm"]
+        p_head = local_beat_period(ref, sr, in_smp / sr, t["bpm"]) or p_glob
+        p_tail = local_beat_period(ref, sr, out_smp / sr, t["bpm"]) or p_glob
+        drift_head = abs(p_head - p_glob) / p_glob
+        drift_tail = abs(p_tail - p_glob) / p_glob
+
+        # region plan: [head-overlap?] [middle] [tail-overlap?]
+        # overlap regions target T beats of timeline at the join BPM while
+        # spanning the deck's LOCAL T beats — no intra-overlap drift.
+        r_mid = t["bpm"] / t["mix_bpm"]
+        regions: list[tuple[int, int, float]] = []
+        cursor = in_smp
+        if T_prev and k > 0:
+            join_dur = T_prev * 60.0 / t["mix_bpm"]
+            head_end = min(out_smp - 1, in_smp + int(T_prev * p_head * sr))
+            if head_end > cursor:
+                regions.append((cursor, head_end,
+                                join_dur / max(1e-6, (head_end - cursor) / sr)))
+                cursor = head_end
+        if T_out and k + 1 < len(tracks):
+            r_join_out = t["bpm"] / tracks[k + 1]["mix_bpm"]
+            split = max(cursor + 1, out_smp - int(T_out * p_tail * sr))
+            join_dur = T_out * 60.0 / tracks[k + 1]["mix_bpm"]
+            if split > cursor:
+                regions.append((cursor, split, r_mid))
+            regions.append((split, out_smp,
+                            join_dur / max(1e-6, (out_smp - split) / sr)))
+        else:
+            regions.append((cursor, out_smp, r_mid))
+
         chans, frames, deltas = wsola(ref, [y[0], y[1]], regions)
         deck = np.stack(chans)
         gain = _lufs_gain(t.get("lufs"))
@@ -224,14 +265,13 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
         _fade(deck, int(sr * 0.01), False)
         decks.append(deck)
 
-        # stem decks (same warping) for the adjacent transitions' needs:
-        # bass serves bass_swap/blend on either side; drums and vocals serve
-        # drum_drop / acapella_overlay on the incoming side.
+        # stem decks (same warping) for adjacent transitions
+        needed: set[str] = set()
+        if "bass_swap" in (kind, tracks[k - 1].get("transition_out", {}).get("type", "")
+                           if k > 0 else ""):
+            needed.add("bass")
         prev_kind = (tracks[k - 1].get("transition_out", {}).get("type", "")
                      if k > 0 else "")
-        needed: set[str] = set()
-        if "bass_swap" in (kind, prev_kind):
-            needed.add("bass")
         if prev_kind == "drum_drop":
             needed.add("drums")
         if prev_kind == "acapella_overlay":
@@ -243,29 +283,80 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
                 st = stems_mod.load_stems(
                     Path(cache_dir) / "stems", fp, names=tuple(needed))
                 if st is not None and abs(st["sr"] - sr) < 1:
-                    for sname, sarr in st.items():
-                        if sname == "sr" or sarr.ndim == 1:
-                            continue
-                        s = sarr.astype(np.float32)
+                    for sname in needed:
+                        s = st[sname].astype(np.float32)
                         if s.ndim == 1:
                             s = np.stack([s, s])
                         sch, _, _ = wsola(ref, [s[0], s[1]], regions, deltas=deltas)
                         st_decks[sname] = np.stack(sch) * gain
         stem_decks.append(st_decks)
 
+        # solo end = start of this deck's tail-overlap region (timeline)
+        solo_end = sum(frames[:-1]) * HOP if (T_out and k + 1 < len(tracks)) \
+            else deck.shape[-1]
+        drifts.append({"head": drift_head, "tail": drift_tail})
         if k == 0:
             starts.append(0)
         else:
             starts.append(ovs[-1]["start"])
-        if T and k + 1 < len(tracks):
-            ov_start = starts[k] + frames[0] * HOP
-            ov_len = deck.shape[-1] - frames[0] * HOP
+        if T_out and k + 1 < len(tracks):
             ovs.append({
-                "k": k, "start": ov_start, "len": ov_len, "beats": T,
-                "type": kind, "bpm": tracks[k + 1]["mix_bpm"],
+                "k": k, "start": starts[k] + solo_end,
+                "len": deck.shape[-1] - solo_end,
+                "beats": T_out, "type": kind,
+                "bpm": tracks[k + 1]["mix_bpm"],
             })
         report(f"deck {k + 1}/{len(tracks)}: {Path(t['path']).name}"
                + (f" (+{','.join(st_decks)})" if st_decks else ""))
+
+    # --- join alignment: measure δ per join, shift incoming, verify ---
+    for j, ov in enumerate(ovs):
+        k = ov["k"]
+        join_p = 60.0 / ov["bpm"]
+        join_drift = max(drifts[k]["tail"], drifts[k + 1]["head"])
+        a0 = ov["start"] - starts[k]
+        look = min(int(20 * sr), decks[k].shape[-1] - a0, decks[k + 1].shape[-1])
+        delta = conf = resid = 0.0
+        if look > int(5 * sr):
+            tail = decks[k][:, a0 : a0 + look].mean(axis=0)
+            head = decks[k + 1][:, :look].mean(axis=0)
+            delta, conf = join_offset(tail, head, sr, join_p)
+            if conf < 0.15:
+                delta = 0.0
+            shift = int(round(delta * sr))
+            if shift:
+                # everything at or after the incoming deck moves with it;
+                # the overlap window moves too, so the incoming's window
+                # content is unchanged — the outgoing tail re-slices.
+                for m in range(k + 1, len(starts)):
+                    starts[m] += shift
+                for later in ovs[j:]:
+                    later["start"] += shift
+                a0 += shift
+                tail2 = decks[k][:, a0 : a0 + look].mean(axis=0)
+                resid, rconf = join_offset(tail2, head, sr, join_p)
+                if rconf < 0.15:
+                    resid = 0.0
+        align_info.append({"join": k + 1, "delta_ms": round(delta * 1000, 1),
+                           "conf": round(conf, 2),
+                           "residual_ms": round(resid * 1000, 1)})
+
+        # demote tight moves that reality can't support
+        why = None
+        if ov["type"] in ("drum_drop", "bass_swap", "acapella_overlay") \
+                and join_drift > DRIFT_TIGHT:
+            why = f"drift {join_drift:.1%}"
+        elif abs(resid) > 0.25 * join_p:
+            why = f"residual {resid*1000:.0f}ms"
+        elif ov["type"] == "blend" and join_drift > DRIFT_ANY:
+            why = f"drift {join_drift:.1%}"
+        if why:
+            demotions.append({"join": k + 1, "from": ov["type"],
+                              "to": "filter_sweep", "why": why})
+            ov["type"] = "filter_sweep"
+        if align_info[-1]["delta_ms"]:
+            report(f"join {k + 1}: aligned by {delta*1000:.0f} ms "
+                   f"(conf {conf:.2f})")
 
     total = starts[-1] + decks[-1].shape[-1]
     master = np.zeros((2, total))
@@ -278,6 +369,10 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
         a_st, b_st = stem_decks[ov["k"]], stem_decks[ov["k"] + 1]
         a0 = ov["start"] - starts[ov["k"]]
         l = min(ov["len"], a_deck.shape[-1] - a0, b_deck.shape[-1])
+        if l <= 0:
+            continue
+        if l % 2:
+            l -= 1  # apply_transition keeps windows even (beat-midpoint math)
         a_seg = a_deck[:, a0 : a0 + l]
         b_seg = b_deck[:, :l]
         used_stems = bool(a_st or b_st)
@@ -307,6 +402,8 @@ def render_set(set_dict: dict, cache_dir, out_wav: str, sr: int = 44100,
         "out": str(out_wav), "sr": sr, "duration_s": round(total / sr, 2),
         "stem_transitions": stem_transitions,
         "stem_fallbacks": fallbacks,
+        "alignment": align_info,
+        "demotions": demotions,
         "transitions": [{"type": o["type"], "start_s": round(o["start"] / sr, 2)}
                         for o in ovs],
     }

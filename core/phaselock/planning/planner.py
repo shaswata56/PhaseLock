@@ -21,9 +21,11 @@ from .camelot import compat, parse
 SET_VERSION = 1
 MAX_STRETCH = 0.04      # deck may deviate this far from its native BPM
 MAX_DRIFT = 0.03        # running mix BPM may move this much per transition
-TRANSITION_BEATS = 32   # standard 8-bar blend
 PHRASE_BEATS = 16       # 4 bars — the phrase grid
 DEFAULT_TRACK_MIN = 3.0
+# Short blends expose less double-content time; builds need the long runway.
+BLEND_BEATS = 16
+BUILD_BEATS = 32
 
 VIBES: dict[str, dict] = {
     "auto":    dict(bpm=(118, 140), start=0.35, peak=1.00, peak_at=0.70, end=0.55, minor_bias=0.0),
@@ -355,9 +357,10 @@ def plan_set(cards: list[TrackCard], duration_min: float, vibe: str | None = Non
         }
         if k < len(seq) - 1:
             nxt_card = seq[k + 1]
+            ttype = _transition_type(c, nxt_card, compat(c.camelot, nxt_card.camelot))
             entry["transition_out"] = {
-                "type": _transition_type(c, nxt_card, compat(c.camelot, nxt_card.camelot)),
-                "beats": TRANSITION_BEATS,
+                "type": ttype,
+                "beats": BUILD_BEATS if ttype == "drum_drop" else BLEND_BEATS,
             }
         tracks_out.append(entry)
 

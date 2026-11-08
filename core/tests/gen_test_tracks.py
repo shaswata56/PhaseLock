@@ -78,10 +78,31 @@ def tone(freq: float, dur: float, amp: float, harmonics=(1.0,)) -> np.ndarray:
     return sig / max(1e-9, np.abs(sig).max()) * amp
 
 
-def render_track(bpm: float, root_pc: int, mode: str, bars: int) -> np.ndarray:
-    beat = 60.0 / bpm
-    total = bars * 4 * beat
-    buf = np.zeros(int(total * SR) + SR, dtype=np.float64)  # tail pad
+def render_track(bpm, root_pc: int, mode: str, bars: int) -> np.ndarray:
+    """Render a synthetic EDM track. `bpm` may be a float or (start, end) —
+    a tuple produces a continuously drifting tempo (live-recording proxy)."""
+    total_beats = bars * 4
+    if isinstance(bpm, tuple):
+        b0, b1 = bpm
+        _bt = [0.0]
+        for i in range(total_beats):
+            cur = b0 + (b1 - b0) * i / total_beats
+            _bt.append(_bt[-1] + 60.0 / cur)
+        _bt = np.asarray(_bt)
+
+        def t_of(pos: float) -> float:
+            i = int(pos)
+            frac = pos - i
+            i = min(i, total_beats - 1)
+            return float(_bt[i] + (_bt[i + 1] - _bt[i]) * frac)
+
+        duration = float(_bt[-1])
+    else:
+        beat = 60.0 / bpm
+        t_of = lambda pos: pos * beat  # noqa: E731
+        duration = total_beats * beat
+
+    buf = np.zeros(int(duration * SR) + SR, dtype=np.float64)  # tail pad
 
     scale = MINOR_SCALE if mode == "minor" else MAJOR_SCALE
     third = 3 if mode == "minor" else 4
@@ -93,22 +114,22 @@ def render_track(bpm: float, root_pc: int, mode: str, bars: int) -> np.ndarray:
     triad_rel = [0, third, 7]   # chord intervals above the root
 
     for bar in range(bars):
-        t0 = bar * 4 * beat
+        t0 = t_of(bar * 4)
         breakdown = bars * 2 // 3 <= bar < bars * 2 // 3 + 8
         intro = bar < 8
 
         for b in range(4):                          # four on the floor
             if not breakdown:
-                add(buf, t0 + b * beat, k)
+                add(buf, t_of(bar * 4 + b), k)
             # offbeat hats everywhere but the intro
             if not intro:
-                add(buf, t0 + (b + 0.5) * beat, h)
+                add(buf, t_of(bar * 4 + b + 0.5), h)
 
         if not breakdown:                           # bass: root/fifth 8ths
             for e in range(8):
                 step = scale[0] if e % 4 != 3 else 7
                 f = midi_hz(root_midi + (step if step <= 5 else 12))
-                add(buf, t0 + e * beat / 2,
+                add(buf, t_of(bar * 4 + e * 0.5),
                     tone(f, 0.16, 0.5, harmonics=(1.0, 0.33, 0.15)))
 
         # chord stabs mark the bar: strong on the 1, weaker on the 3
@@ -118,13 +139,13 @@ def render_track(bpm: float, root_pc: int, mode: str, bars: int) -> np.ndarray:
                               stab_amp, harmonics=(1.0, 0.2)))
         if not breakdown:
             for rel in triad_rel:                   # same triad, octave up
-                add(buf, t0 + 2 * beat, tone(midi_hz(pad_midi + 12 + rel),
-                                             0.22, 0.25, harmonics=(1.0, 0.2)))
+                add(buf, t_of(bar * 4 + 2), tone(midi_hz(pad_midi + 12 + rel),
+                                                 0.22, 0.25, harmonics=(1.0, 0.2)))
 
         if not intro and not breakdown and bar % 2 == 1:   # sparse arp
             for s in range(8):
                 pc = scale[(s * 2) % len(scale)]
-                add(buf, t0 + s * beat / 2,
+                add(buf, t_of(bar * 4 + s * 0.5),
                     tone(midi_hz(pad_midi + 12 + pc), 0.10, 0.10))
 
     peak = np.abs(buf).max()

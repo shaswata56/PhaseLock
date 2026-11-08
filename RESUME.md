@@ -20,13 +20,23 @@ by reading this file.*
   acapella_overlay), **11 real stem swaps**, −1.00 dBFS, −11.2 LUFS,
   finite, deterministic. 12 tracks stem-separated (~36 min CPU).
 
+**v2.1 (listening-feedback pass):** user's verdict "some good, some wasn't" →
+diagnosis: 17/19 joins at drift/phase risk (live Voice recording drifts 1.4%,
+δ up to ±209 ms). Engine now: local-tempo overlap regions, measured
+kick-comb phase alignment per join (residual-verified, demote-to-sweep when
+unsalvageable), 16-beat blends, drum_drop outgoing HP-sweep, tamed acapella.
+**Showcase v2 rendered:** `renders/showcase_60min_v2.mp3` — 18/19 joins
+corrected (up to ±209 ms), 9 stem swaps, −1.00 dBFS. Alignment gates
+(test_alignment.py: 100 ms grid-error → 0.3 ms residual) + full regression
+green. The v1 mix stays at `renders/showcase_60min.mp3` for A/B.
+
 **Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
 curves, preview 200/206, plan/edit).
 
 ## Next steps (v3 ideas in PLAN.md — nothing pending)
 
-- **Listen to `renders/showcase_60min.mp3`** — the blind-listen gate is the
-  one human check left
+- **A/B listen: `showcase_60min_v2.mp3` vs the v1** — the corrected joins
+  are #2, #5, #10, #12, #15, #17, #18 (largest corrections)
 - Live dual-deck Web Audio booth; MusicGen textures; Opus stems; GPU batch
 
 **What exists:**
