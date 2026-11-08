@@ -29,34 +29,46 @@ def _rotate(profile: np.ndarray, root: int) -> np.ndarray:
 
 
 def chroma(y: np.ndarray, sr: int) -> np.ndarray:
-    """Aggregate chroma vector (12,) — mean CQT chroma over the track."""
+    """Aggregate chroma vector (12,) — mean CQT chroma.
+
+    Two windows, each L2-normalized before averaging so a loud instrumental
+    middle cannot outvote the opening sections where the key is established
+    (a middle-only window once read a G-major vocal track as G minor).
+    """
     import librosa
 
-    # Long tracks: analyze the loudest middle 120 s; intros/outros are sparse.
-    max_samples = sr * 120
-    if y.size > max_samples:
-        start = (y.size - max_samples) // 2
-        y = y[start : start + max_samples]
-    c = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=1024)
-    return c.mean(axis=1)
+    def win_chroma(seg: np.ndarray) -> np.ndarray | None:
+        if seg.size < sr * 8:
+            return None
+        c = librosa.feature.chroma_cqt(y=seg, sr=sr, hop_length=1024).mean(axis=1)
+        n = np.linalg.norm(c)
+        return c / n if n > 0 else None
+
+    head = win_chroma(y[: sr * 90])
+    mid_seg = y[max(0, (y.size - sr * 120) // 2):][: sr * 120]
+    mid = win_chroma(mid_seg)
+    parts = [w for w in (head, mid) if w is not None]
+    if not parts:
+        raise ValueError("audio too short for key analysis")
+    return np.mean(parts, axis=0)
 
 
 def analyze(chroma_vec: np.ndarray) -> dict:
     """Best key for an aggregate chroma vector, plus runner-ups.
 
-    Keys: key_root, key_mode, key_name, camelot, confidence (corr, 0..1-ish),
+    Keys: key_root, key_mode, key_name, camelot, confidence (Pearson corr),
     candidates (top 3).
     """
     c = np.asarray(chroma_vec, dtype=float)
-    c = c / (np.linalg.norm(c) + 1e-12)
 
     best = None
     scored = []
     for mode, profile in (("major", _MAJOR), ("minor", _MINOR)):
         for root in range(12):
             p = _rotate(profile, root)
-            p = p / (np.linalg.norm(p) + 1e-12)
-            corr = float(np.dot(c, p))
+            # Pearson (mean-centered) — KS correlation; a plain cosine on
+            # uncentered chroma systematically skews toward minor
+            corr = float(np.corrcoef(c, p)[0, 1])
             scored.append((corr, PC_NAMES[root], mode))
             if best is None or corr > best[0]:
                 best = (corr, PC_NAMES[root], mode)
