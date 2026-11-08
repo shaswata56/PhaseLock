@@ -3,9 +3,9 @@
 *Live project state. Update at the end of every session. A new session starts
 by reading this file.*
 
-## Current state (2026-11-08, deep night — v2.7)
+## Current state (2026-11-09, early hours — v2.8)
 
-**Status: v1 + v2 + reference-mode mashup (v6) complete.**
+**Status: v1 + v2 + musically-verified mashup (v7) complete. Key detector fixed.**
 
 **v2 delivered:**
 - Full real library: 110 tracks (98 of 99 Liked Songs; 1 unicode filename
@@ -95,6 +95,18 @@ vocal, clean downbeat slam, no seams. Debug trail banked: limiter was
 innocent (spy instrumentation found +43dBFS reverb spikes); dB sentinels
 must be None not >0; fixed-window part pickers straddle gaps — use
 contiguous runs.
+
+**v2.8 (after "you're still not getting what you're creating"):** first
+genuinely musical question — what NOTES does the topline sing over the
+bed's CHORDS — exposed that v6 ground a semitone (WBBC's dominant G
+natural over a G#-centered bed) because the Phase-1 key detector was
+wrong for 25/79 tracks (cosine on uncentered chroma + middle-only
+window). key.py fixed (Pearson + two-window chroma, verified vs known
+keys), library re-keyed, and pair selection now runs a bar-level
+consonance check (donor melody PCs vs the bed's measured chord loop)
+BEFORE rendering. v7: Find You (Eb maj) × This Is What It Feels Like
+(Ab maj, 0.73 consonance) — `renders/mashup_findyou_tiwifl_v7.mp3`,
+0 clicks, LUFS −14.6, vision clean w/ distinct register lanes.
 
 **Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
 curves, preview 200/206, plan/edit, build).
