@@ -36,6 +36,7 @@ whatever's findable/generatable.)
 | 2026-11-08 | Repo-local git identity: `shaswata56 <shaswata56@users.noreply.github.com>` | Global identity is the forbidden orbitax one; noreply address is tied to the personal account and exposes nothing. Set BEFORE first commit (per sites-repo lesson). |
 | 2026-11-08 | MVP = Phases 1–3 (analyze → plan → render) | Stems/app/taste all build on a working render core; render is the credibility gate. |
 | 2026-11-08 | Python core before web app | Render quality is the hard part; UI last so it wraps a proven core. |
+| 2026-11-08 | Remote: `git@github.com:shaswata56/PhaseLock.git` (SSH) | User-created repo; SSH = personal key per convention. Push after every change. |
 
 ## Conventions
 
