@@ -1,0 +1,36 @@
+# audio + large media — never commit
+library/
+stems_cache/
+renders/
+*.mp3
+*.flac
+*.wav
+*.aiff
+*.m4a
+*.ogg
+*.opus
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# node / next
+node_modules/
+.next/
+out/
+
+# data & env
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+
+# tooling
+.DS_Store
+Thumbs.db
