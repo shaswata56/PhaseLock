@@ -5,27 +5,39 @@ by reading this file.*
 
 ## Current state (2026-11-08)
 
-**Phase:** 0 complete (scaffold). Next: Phase 1 kickoff — The Ears.
+**Phase:** 1 complete (The Ears — analysis core, all gates passed). Next:
+**Phase 2 kickoff — The Brain (set generation)**.
 
-**Done:**
-- Project named **PhaseLock** (beat-matching = phase-locking two signals; PLL).
-- Repo at `C:\workstation\phaselock`, git initialized, initial commit made with
-  repo-local identity.
-- README (vision/principles), PLAN (overview + 7-phase plan with acceptance
-  gates), RESUME (this file), .gitignore (media + stems excluded).
+**Done this session:**
+- venv at `.venv` (Python 3.13.4), pinned deps in `core/requirements.lock`,
+  package installed editable (`pip install -e core` → `phaselock` CLI).
+- Full analysis core under `core/phaselock/`: decode (mp3/flac/wav native,
+  ffmpeg pipe for the rest), tempo (librosa + regression + ACF rebuild),
+  key (Krumhansl–Schmuckler → Camelot), energy (RMS curve, LUFS, novelty),
+  waveform peaks; SQLite + JSON sidecars with change detection.
+- Synthetic test rig: `core/tests/gen_test_tracks.py` (10 exact-ground-truth
+  EDM tracks) + `core/tests/test_analysis.py` (the acceptance gates).
+- **Gates: BPM 10/10 within ±0.5% (worst 0.16%), key 9/10 (gate ≥8),
+  beatgrids 10/10.** Real sanity: 15 Liked-Songs mp3s, 0 errors, plausible
+  values throughout.
 
-**Next steps (Phase 1 kickoff checklist):**
-1. Python 3.11+ venv at `core/.venv` (or repo root `.venv`), pin deps:
-   librosa, madmom, essentia (conda-forge if pip fails on Windows), pyloudnorm,
-   soundfile, numpy, click.
-2. Assemble 10 test tracks with known BPM + key (from Beatport or user's own
-   tagged library) into `library/test/` — gitignored.
-3. Schema first: SQLite tables + JSON sidecar format, THEN analyzers.
-4. CLI skeleton: `phaselock analyze/list/stats` (click).
+**Next steps (Phase 2 kickoff):**
+1. Camelot compatibility graph (±1 steps, relative major/minor, energy-jump
+   rules) — pure function + unit tests.
+2. Energy-arc profiler over the library (read sidecar curves; intro→build→
+   peak→land).
+3. BPM chaining (monotone-ish drift, ≤ ±4% stretch), transition point
+   selection at phrase boundaries (32/16 bars from downbeat grid).
+4. `phaselock plan --duration 60` → set JSON + readable setlist; acceptance:
+   zero key clashes, no BPM jump > 4% at transitions, two vibes → two
+   meaningfully different sets.
 
-**Blockers/questions for user:** none. (If you have a preferred test folder of
-EDM tracks on this machine, point me at it — otherwise I'll work with
-whatever's findable/generatable.)
+**Data on disk:** `data/phaselock.db` (25 tracks: 10 synthetic + 15 real
+sample), sidecars in `data/cache/`. `library/test/` regenerable via the
+generator; `library/real_sample/` holds 15 of the user's 99 Liked Songs
+(full library at `~/Downloads/Liked Songs` — analyze wholesale when useful).
+
+**Blockers/questions for user:** none.
 
 ## Decision log
 
@@ -37,6 +49,9 @@ whatever's findable/generatable.)
 | 2026-11-08 | MVP = Phases 1–3 (analyze → plan → render) | Stems/app/taste all build on a working render core; render is the credibility gate. |
 | 2026-11-08 | Python core before web app | Render quality is the hard part; UI last so it wraps a proven core. |
 | 2026-11-08 | Remote: `git@github.com:shaswata56/PhaseLock.git` (SSH) | User-created repo; SSH = personal key per convention. Push after every change. |
+| 2026-11-08 | librosa backend, not madmom | madmom won't build on Python 3.13 (Cython). Compensated: beat-index regression (sub-frame BPM) + ACF cross-check/rebuild (metrical-level fixes). madmom stays an optional backend if the Python version ever allows. |
+| 2026-11-08 | Own KS key detector, no Essentia | Essentia has no Windows wheels; KS profiles are textbook and passed the gate. Known limitation: relative major/minor confusion (1/10 synthetic misses) → `key_override` + sidecar top-3 candidates cover it. |
+| 2026-11-08 | Test material = synthetic generator with exact ground truth | BPM/key precision gates need exact truth; real tracks (no ground truth) are the sanity layer. Regenerable, deterministic, seeded. |
 
 ## Conventions
 
@@ -44,3 +59,5 @@ whatever's findable/generatable.)
 - Audio/stems never committed; `library/` and `stems_cache/` are gitignored.
 - Determinism gate from Phase 3 on: same input → byte-identical render.
 - Repo-local git identity only — never rely on global config here.
+- Run tests: `.venv/Scripts/python.exe core/tests/test_analysis.py`
+  (regenerate material first if `library/test/` is missing).

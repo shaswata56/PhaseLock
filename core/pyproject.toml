@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phaselock-core"
+version = "0.1.0"
+description = "PhaseLock analysis core — library analysis for the personal AI DJ"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "librosa",
+    "soundfile",
+    "pyloudnorm",
+    "click",
+]
+
+[project.optional-dependencies]
+madmom = ["madmom"]
+
+[project.scripts]
+phaselock = "phaselock.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["phaselock*"]
