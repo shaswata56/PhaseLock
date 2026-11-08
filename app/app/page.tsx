@@ -33,6 +33,8 @@ type Job = {
   mixUrl?: string;
 };
 
+type Render = { name: string; sizeMb: number; modified: string };
+
 const VIBES = ["auto", "peak", "warmup", "melodic", "dark", "closing"];
 const TRANSITIONS = [
   "blend",
@@ -198,6 +200,7 @@ export default function Booth() {
   const [mBeats, setMBeats] = useState(16);
   const [building, setBuilding] = useState(false);
   const [buildWarn, setBuildWarn] = useState<string[]>([]);
+  const [vault, setVault] = useState<Render[]>([]);
 
   const manualTrack = (p: string) => tracks.find((t) => t.path === p);
   const addToManual = (t: Track) => {
@@ -250,9 +253,20 @@ export default function Booth() {
       .then((t: Track[]) => setTracks(t.filter((x) => x.analysis_status === "ok")))
       .catch(() => setError("could not load library — is `phaselock analyze` done?"));
 
+  const loadRenders = () =>
+    fetch("/api/renders")
+      .then((r) => r.json())
+      .then((v: Render[]) => setVault(v))
+      .catch(() => {});
+
   useEffect(() => {
     load();
+    loadRenders();
   }, []);
+
+  useEffect(() => {
+    if (job?.status === "done") loadRenders(); // fresh artifact appears in vault
+  }, [job?.status]);
 
   useEffect(() => {
     if (!job || job.status !== "running") return;
@@ -407,6 +421,49 @@ export default function Booth() {
         <div className="mb-4 rounded border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-300">
           {error}
         </div>
+      )}
+
+      {/* Vault: every rendered artifact, playable inline */}
+      {vault.length > 0 && (
+        <section className="mb-6 rounded-lg border border-zinc-800 bg-zinc-900/60">
+          <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
+            <h2 className="text-sm font-semibold tracking-wide text-zinc-300">
+              VAULT — rendered artifacts
+            </h2>
+            <button
+              onClick={loadRenders}
+              className="text-xs text-zinc-500 hover:text-emerald-300"
+            >
+              refresh
+            </button>
+          </div>
+          <ul className="max-h-56 space-y-1 overflow-auto p-2">
+            {vault.map((r) => (
+              <li key={r.name} className="rounded bg-zinc-950/60 px-2 py-1.5">
+                <div className="mb-1 flex items-center gap-2 font-mono text-xs">
+                  <span className="flex-1 truncate text-zinc-300">{r.name}</span>
+                  <span className="tabular-nums text-zinc-600">
+                    {r.sizeMb} MB
+                  </span>
+                  <a
+                    href={`/api/renders?file=${encodeURIComponent(r.name)}`}
+                    download={r.name}
+                    className="text-zinc-500 hover:text-emerald-300"
+                    title="download"
+                  >
+                    ↓
+                  </a>
+                </div>
+                <audio
+                  controls
+                  preload="none"
+                  src={`/api/renders?file=${encodeURIComponent(r.name)}`}
+                  className="h-8 w-full"
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
