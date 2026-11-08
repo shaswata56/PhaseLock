@@ -3,9 +3,9 @@
 *Live project state. Update at the end of every session. A new session starts
 by reading this file.*
 
-## Current state (2026-11-08, night — v2 COMPLETE)
+## Current state (2026-11-08, late night — v2.5)
 
-**Status: v1 (all 7 phases) + v2 complete. Showpiece mix rendered.**
+**Status: v1 + v2 + mashup + vault + listening rig complete.**
 
 **v2 delivered:**
 - Full real library: 110 tracks (98 of 99 Liked Songs; 1 unicode filename
@@ -37,6 +37,33 @@ never block) → build → per-join type editing → render. Backed by
 `phaselock build` CLI + `planner.build_manual_set` (manual tempo limits ±8%
 stretch / ±6% drift, clamps + warns on extreme gaps). Gates
 `test_build.py` pass; live-verified hand-picked pair → render → stream.
+
+**v2.3 (mashup, on user request "ultimate test"):** `phaselock mashup` —
+instrumental bed from one base track's stems + guest vocals from donors,
+energy-ranked phrase-anchored windows, anchor-phrase warp, uniform
+mix-tempo section grid, per-section slots. Gates `test_mashup.py`
+(G1 finite/duration, G2 placements, G3 determinism). Artifact:
+`renders/mashup_zedd_bounce_days.mp3`.
+
+**v2.4 (VAULT):** booth renders panel lists `renders/` with inline audio
+players (auto-refresh on job completion); Range-streaming API with strict
+filename validation.
+
+**v2.5 (listening rig, on user challenge "you need a way to listen"):**
+`phaselock listen AUDIO --start S --dur D -o png` renders a 4-panel view
+(mel spectrogram + downbeat ticks, waveform + onsets, sub/vocal-band dB,
+highs/low-mid dB) + machine notes (clicks, kick-band flams, band balance)
+— `rendering/listen.py`. **First honest listen of the mashup exposed two
+real flaws:** per-stem section gains defined but never applied (one summed
+envelope → drop1−build1 sub = −0.7 dB, inverted), and the bed read the
+source linearly so mashup drops sat on the source's breakdowns. **v3
+fixes:** per-stem per-section mixing (drops bass ×1.7, builds duck+ramp,
+melody stem HP @90 Hz), phrase-sampled bed (`_plan_bed_windows` — source
+phrases ranked by sub energy; drops get the source's biggest moments).
+Verified by listening: drop1−build1 **+16.7 dB**, drop1−break +15.3 dB,
+drops consistent ≤2.2 dB, 0 clicks; vision-model spectrogram read
+independently confirms (on-grid single kicks, drop energy jump, break
+sub dropout, vocal formants, no clipping).
 
 **Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
 curves, preview 200/206, plan/edit, build).
