@@ -2,6 +2,9 @@
 library/
 stems_cache/
 renders/
+
+# derived analysis data (db, sidecars) — regenerable
+data/
 *.mp3
 *.flac
 *.wav
