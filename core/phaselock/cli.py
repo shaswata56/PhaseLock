@@ -129,12 +129,15 @@ def override(path: str, key_name: str, db_path: str | None) -> None:
 @main.command()
 @click.option("--duration", default=60.0, show_default=True, help="Target minutes.")
 @click.option("--vibe", default=None,
-              help="peak / warmup / melodic / dark / closing / auto")
+              help="peak / warmup / melodic / dark / closing / auto + DSL "
+                   "(e.g. 'dark bpm 124-128 end 126')")
+@click.option("--llm", "use_llm", is_flag=True,
+              help="Order via PHASELOCK_LLM_CMD hook if set.")
 @click.option("--db", "db_path", default=None)
 @click.option("--cache", "cache_dir", default=None)
 @click.option("--out", "out_path", default=None, help="Set JSON path.")
 @click.option("--json", "as_json", is_flag=True, help="Print set JSON only.")
-def plan(duration: float, vibe: str | None, db_path: str | None,
+def plan(duration: float, vibe: str | None, use_llm: bool, db_path: str | None,
          cache_dir: str | None, out_path: str | None, as_json: bool) -> None:
     """Generate a DJ set from the analyzed library."""
     import json as _json
@@ -147,7 +150,19 @@ def plan(duration: float, vibe: str | None, db_path: str | None,
     if len(cards) < 2:
         click.echo("need ≥2 analyzed tracks — run `phaselock analyze <folder>`")
         raise SystemExit(1)
-    s = planner.plan_set(cards, duration, vibe)
+
+    order = None
+    if use_llm:
+        lib = [{"path": c.path, "bpm": c.bpm, "key": c.key_name,
+                "camelot": c.camelot, "energy": round(c.energy, 3),
+                "duration_s": c.duration_s} for c in cards]
+        order = planner.llm_order(lib, vibe or "")
+        if order:
+            click.echo(f"llm hook supplied {len(order)} track order")
+        else:
+            click.echo("llm hook empty/absent — built-in search")
+
+    s = planner.plan_set(cards, duration, vibe, order=order)
 
     if out_path is None:
         sets = _REPO_ROOT / "data" / "sets"
@@ -245,6 +260,20 @@ def stems(paths: tuple[str, ...], db_path: str | None, cache_dir: str | None,
             click.echo(f"stems  {Path(p).name} → {d}")
         except Exception as e:  # noqa: BLE001
             click.echo(f"ERROR  {Path(p).name}: {e}")
+
+
+@main.command("tracks")
+@click.option("--db", "db_path", default=None)
+def tracks(db_path: str | None) -> None:
+    """Library rows as JSON (for the web app)."""
+    import json as _json
+
+    conn = _db(db_path)
+    rows = conn.execute(
+        "SELECT path, bpm, key_name, camelot, loudness_lufs, duration_s, "
+        "energy_mean, analysis_status FROM tracks ORDER BY path"
+    ).fetchall()
+    click.echo(_json.dumps([dict(r) for r in rows]))
 
 
 if __name__ == "__main__":

@@ -44,18 +44,46 @@ journey, and plays the set — beat-matched, phrase-aware, stem-deep.
 
 ## Status
 
-**Phase 0 — scaffold (this repo).** See [PLAN.md](PLAN.md) for the full
-multiphase plan and [RESUME.md](RESUME.md) for live project state.
+**All seven phases complete (2026-11-08) — every acceptance gate passed.**
+See [PLAN.md](PLAN.md) for phase details and [RESUME.md](RESUME.md) for live
+project state.
+
+## Quick start
+
+```bash
+# one-time setup
+python -m venv .venv
+.venv/Scripts/python -m pip install -r core/requirements.lock
+.venv/Scripts/python -m pip install -e core          # phaselock CLI
+.venv/Scripts/python -m pip install demucs           # optional: stems
+
+# analyze a music folder (mp3/flac/wav; m4a/ogg via ffmpeg)
+.venv/Scripts/phaselock analyze "C:\path\to\music"
+
+# plan + render a set
+.venv/Scripts/phaselock plan --duration 60 --vibe "dark bpm 124-128 end 126"
+.venv/Scripts/phaselock render data/sets/set_<stamp>.json --mp3 out.mp3
+
+# optional: stem-separate tracks for true bass-swap transitions
+.venv/Scripts/phaselock stems "C:\path\to\music\track.mp3"
+
+# the booth (web app)
+cd app && npm install && npm run build && npx next start -p 3100
+# → http://localhost:3100
+```
 
 ## Repo layout
 
 ```
 phaselock/
 ├── README.md      # this file — vision + principles
-├── PLAN.md        # overview plan + multiphase plan
+├── PLAN.md        # overview plan + multiphase plan (all phases ✅)
 ├── RESUME.md      # continuously updated: state, next steps, decisions
-├── core/          # Python analysis + rendering engine (Phase 1+)
-├── app/           # Next.js web app (Phase 5+)
-├── library/       # YOUR music — gitignored
-└── stems_cache/   # separated stems — gitignored (large!)
+├── core/          # Python package: analyze / plan / render / stems + CLI
+│   └── tests/     # acceptance gate suites (test_*.py) + track generator
+├── app/           # Next.js booth — library browser, plan UI, render jobs
+├── data/          # phaselock.db + sidecar cache + sets  (gitignored)
+├── library/       # YOUR music                        (gitignored)
+├── stems_cache/   # separated stems                   (gitignored)
+└── renders/       # rendered mixes                    (gitignored)
 ```

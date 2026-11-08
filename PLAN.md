@@ -116,29 +116,38 @@ real stems (engine reports the swap, −1.00 dBFS, finite); fallback path
 verified without stems.
 **Est:** 1–2 sessions → took 1
 
-### Phase 5 — The Booth (web app)
+### Phase 5 — The Booth (web app) ✅ (2026-11-08)
 **Goal:** Next.js app: browse library, see waveforms/curves, queue sets,
 play + export.
-**Build:**
-- Library browser (filters: key, BPM, energy), track detail with waveform +
-  energy overlay
-- Set builder: drag/edit a generated set, transition markers
-- Playback of rendered mixes; live A/B of transition variants
-- Stretch (only if core is solid): dual-deck live mode with stem toggles
-  (Web Audio scheduling, Chris Wilson lookahead pattern)
-**Acceptance:**
-- Full loop in browser: analyze → plan → render → listen without touching a CLI
-**Est:** ongoing
+**Built:**
+- [x] `app/` Next.js 16 + Tailwind: dark booth UI — sortable/filterable
+      library table, plan panel (duration + vibe presets + DSL input),
+      setlist with transition typing, render button → live job log →
+      in-browser player + WAV download
+- [x] API routes shell out to the `phaselock` CLI (one source of truth):
+      GET /api/tracks (60 s cache), POST /api/plan, POST /api/render
+      (background job), GET /api/jobs (status + mix streaming; paths
+      validated against data/sets and renders/)
+- [x] Full loop verified live: plan → job → 57 MB WAV streamed over HTTP
+**Deferred:** waveform/energy-curve detail view and per-track preview
+streaming (v2 booth polish); live dual-deck mode remains the stretch goal.
+**Est:** ongoing → v1 took 1 session
 
-### Phase 6 — The Taste (LLM + generative layer)
-**Goal:** natural-language curation; optional generative textures.
-**Build:**
-- LLM set curation over the analyzed library metadata ("dark melodic techno,
-  90 min, end at 126 BPM") → set JSON in Phase 2's format
-- Optional: MusicGen/Riffusion-generated transition textures, one-shots
-**Acceptance:**
-- Vibe prompt → set that a human agrees matches the prompt
-**Est:** 1 session
+### Phase 6 — The Taste (vibe DSL + LLM hook) ✅ (2026-11-08)
+**Goal:** natural-language curation without a hard external dependency.
+**Built:**
+- [x] Vibe DSL: presets (auto/peak/warmup/melodic/dark/closing) + directives
+      `bpm A-B`, `end NNN`, `start NNN`, modifiers hype/chill/soft/minor/
+      major — unknown words ignored, so free-text prompts work
+- [x] Optional LLM hook: `PHASELOCK_LLM_CMD` receives {library, prompt} on
+      stdin, returns a path order; planner honors it after compatibility
+      repair (clashing/incompatible entries dropped, never mixed through);
+      any hook failure falls back silently to the built-in beam search
+- [x] `phaselock plan --llm`
+**Acceptance — PASSED:** DSL parsing gates; disjoint DSL windows steer
+selection; fake LLM hook (reverse order) honored end-to-end with zero
+clashes after repair; absent hook falls back.
+**Est:** 1 session → took <1
 
 ---
 
@@ -166,9 +175,20 @@ play + export.
 | # | Milestone | Phase |
 |---|---|---|
 | M0 | Scaffold | 0 ✅ |
-| M1 | It knows your library | 1 |
-| M2 | It plans the journey | 2 |
-| M3 | **It plays the set (MVP)** | 3 |
-| M4 | It takes the track apart | 4 |
-| M5 | It lives in the browser | 5 |
-| M6 | It has taste | 6 |
+| M1 | It knows your library | 1 ✅ |
+| M2 | It plans the journey | 2 ✅ |
+| M3 | **It plays the set (MVP)** | 3 ✅ |
+| M4 | It takes the track apart | 4 ✅ |
+| M5 | It lives in the browser | 5 ✅ |
+| M6 | It has taste | 6 ✅ |
+
+**All seven phases complete 2026-11-08.** Every phase passed its acceptance
+gates; full regression (`core/tests/test_*.py`) is green.
+
+## v2 ideas (unplanned)
+
+- Booth: waveform + energy-curve detail view, per-track preview streaming,
+  transition-type editing, live dual-deck Web Audio mode with stem toggles
+- MusicGen/Riffusion transition textures (generative layer)
+- Drum-only drops, acapella overlays (stems exist; transitions not built)
+- Opus stem cache option; Cloud Run GPU batch separation

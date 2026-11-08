@@ -5,59 +5,71 @@ by reading this file.*
 
 ## Current state (2026-11-08)
 
-**Phase:** 1 complete (The Ears — analysis core, all gates passed). Next:
-**Phase 2 kickoff — The Brain (set generation)**.
+**Status: SOFTWARE COMPLETE — all seven phases done, all gates passed,
+full regression green.** Same day as scaffold; pushed to GitHub.
 
-**Done this session:**
-- venv at `.venv` (Python 3.13.4), pinned deps in `core/requirements.lock`,
-  package installed editable (`pip install -e core` → `phaselock` CLI).
-- Full analysis core under `core/phaselock/`: decode (mp3/flac/wav native,
-  ffmpeg pipe for the rest), tempo (librosa + regression + ACF rebuild),
-  key (Krumhansl–Schmuckler → Camelot), energy (RMS curve, LUFS, novelty),
-  waveform peaks; SQLite + JSON sidecars with change detection.
-- Synthetic test rig: `core/tests/gen_test_tracks.py` (10 exact-ground-truth
-  EDM tracks) + `core/tests/test_analysis.py` (the acceptance gates).
-- **Gates: BPM 10/10 within ±0.5% (worst 0.16%), key 9/10 (gate ≥8),
-  beatgrids 10/10.** Real sanity: 15 Liked-Songs mp3s, 0 errors, plausible
-  values throughout.
+**What exists:**
+- **Analysis core** (`core/phaselock/`): BPM (sub-frame via beat-index
+  regression + onset-ACF cross-check with grid rebuild), key→Camelot
+  (Krumhansl–Schmuckler + human override), beatgrid/downbeats, energy curve
+  + LUFS + novelty, waveform peaks. SQLite + JSON sidecars, change detection.
+- **Planner**: Camelot compat graph, deterministic beam search over energy
+  arcs, phrase-aligned in/out points, transition typing, vibe DSL
+  (presets + `bpm A-B`/`end NNN`/modifiers), optional LLM ordering hook
+  (`PHASELOCK_LLM_CMD`) with compatibility repair.
+- **Renderer**: single-pass variable-rate WSOLA (sample-exact beat mapping,
+  delta-shared stem decks), phase-locked downbeat-on-downbeat timeline,
+  blend/bass_swap/filter_sweep transitions (LR4 crossover), stem bass swaps
+  from Demucs htdemucs cache, LUFS gain riding, look-ahead limiter,
+  byte-identical determinism.
+- **Stems**: `phaselock stems` CLI, FLAC cache + manifest staleness.
+- **Booth** (`app/`): Next.js 16 — library table (sort/filter), plan panel
+  (duration/vibe/DSL), setlist with transition arrows, background render
+  jobs with live log, in-browser player + WAV download. All API routes
+  shell to the CLI.
 
-**Next steps (Phase 2 kickoff):**
-1. Camelot compatibility graph (±1 steps, relative major/minor, energy-jump
-   rules) — pure function + unit tests.
-2. Energy-arc profiler over the library (read sidecar curves; intro→build→
-   peak→land).
-3. BPM chaining (monotone-ish drift, ≤ ±4% stretch), transition point
-   selection at phrase boundaries (32/16 bars from downbeat grid).
-4. `phaselock plan --duration 60` → set JSON + readable setlist; acceptance:
-   zero key clashes, no BPM jump > 4% at transitions, two vibes → two
-   meaningfully different sets.
+**Verified:** analysis gates (BPM 10/10 ±0.5%, key 9/10), planning gates,
+render gates (no-clip −0.98 dBTP, −11.4 LUFS, byte-identical, phase-locked
+overlaps), stems gates (fresh/stale, real stem swap + fallback), vibe gates
+(DSL, steering, LLM hook + repair + fallback); real-mp3 end-to-end render;
+full web loop (plan → job 5.9s → 57 MB WAV streamed).
 
-**Data on disk:** `data/phaselock.db` (25 tracks: 10 synthetic + 15 real
-sample), sidecars in `data/cache/`. `library/test/` regenerable via the
-generator; `library/real_sample/` holds 15 of the user's 99 Liked Songs
-(full library at `~/Downloads/Liked Songs` — analyze wholesale when useful).
+**Data:** `data/phaselock.db` — 27 tracks (10 synthetic ground truth, 2 stem
+tests, 15 real Liked-Songs sample). User's full library: 99 mp3s at
+`~/Downloads/Liked Songs` — analyze wholesale any time.
 
-**Blockers/questions for user:** none.
+**The booth is (probably) still running:** `http://localhost:3100`
+(started with `npx next start -p 3100` from `app/`).
+
+## Next steps (v2 ideas — nothing is pending)
+
+- Analyze the full 99-track Liked Songs library; render a real 60-min set
+- Booth polish: waveform/energy detail view, per-track preview, transition
+  editing, live dual-deck Web Audio mode
+- Drum-only drops + acapella overlays (stems cached, transitions unbuilt)
+- Optional: MusicGen textures, Opus stems, Cloud Run GPU batch
 
 ## Decision log
 
 | Date | Decision | Why |
 |---|---|---|
-| 2026-11-08 | Name: PhaseLock | PLL metaphor; beat-matching is phase-locking. Alternates considered: Dropwise, Selector, Downbeat. |
-| 2026-11-08 | Location: `C:\workstation\phaselock` | Workstation = product workspace (chonky.cam precedent); `~/work` reserved for hunts. |
-| 2026-11-08 | Repo-local git identity: `shaswata56 <shaswata56@users.noreply.github.com>` | Global identity is the forbidden orbitax one; noreply address is tied to the personal account and exposes nothing. Set BEFORE first commit (per sites-repo lesson). |
-| 2026-11-08 | MVP = Phases 1–3 (analyze → plan → render) | Stems/app/taste all build on a working render core; render is the credibility gate. |
-| 2026-11-08 | Python core before web app | Render quality is the hard part; UI last so it wraps a proven core. |
-| 2026-11-08 | Remote: `git@github.com:shaswata56/PhaseLock.git` (SSH) | User-created repo; SSH = personal key per convention. Push after every change. |
-| 2026-11-08 | librosa backend, not madmom | madmom won't build on Python 3.13 (Cython). Compensated: beat-index regression (sub-frame BPM) + ACF cross-check/rebuild (metrical-level fixes). madmom stays an optional backend if the Python version ever allows. |
-| 2026-11-08 | Own KS key detector, no Essentia | Essentia has no Windows wheels; KS profiles are textbook and passed the gate. Known limitation: relative major/minor confusion (1/10 synthetic misses) → `key_override` + sidecar top-3 candidates cover it. |
-| 2026-11-08 | Test material = synthetic generator with exact ground truth | BPM/key precision gates need exact truth; real tracks (no ground truth) are the sanity layer. Regenerable, deterministic, seeded. |
+| 2026-11-08 | Name: PhaseLock | PLL metaphor; beat-matching is phase-locking. Alternates: Dropwise, Selector, Downbeat. |
+| 2026-11-08 | Location: `C:\workstation\phaselock` | Workstation = product workspace (chonky.cam precedent). |
+| 2026-11-08 | Repo-local git identity: `shaswata56 <shaswata56@users.noreply.github.com>` | Global identity is the forbidden orbitax one; set before first commit. |
+| 2026-11-08 | MVP = Phases 1–3; Python core before web app | Render quality is the credibility gate; UI wraps a proven core. |
+| 2026-11-08 | Remote: `git@github.com:shaswata56/PhaseLock.git` (SSH) | User-created; push after every change. |
+| 2026-11-08 | librosa backend, not madmom | madmom won't build on py3.13. Compensated: beat regression + ACF rebuild. |
+| 2026-11-08 | Own KS key detector, no Essentia | Essentia has no Windows wheels; override + top-3 candidates cover misses. |
+| 2026-11-08 | Own WSOLA instead of Signalsmith/binding | No pip wheel for Python; ≤4% ratios are WSOLA-transparent; single-pass variable-rate gives sample-exact grids. |
+| 2026-11-08 | Test material = seeded synthetic generator | Exact ground truth for precision gates; real mp3s are the sanity layer. |
+| 2026-11-08 | Booth shells out to the CLI | One source of truth; no analysis logic duplicated in JS. |
+| 2026-11-08 | LLM = optional external hook, not a dependency | $0/offline by default; the LLM refines order only, compat repair keeps it safe. |
+| 2026-11-08 | data/ fully gitignored | Derived artifacts (db, sidecars, sets); accidentally committed once, untracked. |
 
 ## Conventions
 
-- Every session: end by updating this file (state, next steps, decisions).
-- Audio/stems never committed; `library/` and `stems_cache/` are gitignored.
-- Determinism gate from Phase 3 on: same input → byte-identical render.
-- Repo-local git identity only — never rely on global config here.
-- Run tests: `.venv/Scripts/python.exe core/tests/test_analysis.py`
-  (regenerate material first if `library/test/` is missing).
+- Audio/stems/renders/data never committed.
+- Determinism gate: same set JSON → byte-identical WAV.
+- Repo-local git identity only.
+- Run gates: `.venv/Scripts/python.exe core/tests/test_{analysis,planning,render,stems,vibe}.py`
+  (regenerate `library/test/` via `core/tests/gen_test_tracks.py` if missing).

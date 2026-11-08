@@ -35,16 +35,48 @@ VIBES: dict[str, dict] = {
 
 
 def resolve_vibe(spec: str | None) -> dict:
-    """Keyword vibe → arc/bpm parameters. Unknown words fall back to 'auto'."""
+    """Vibe DSL → arc/bpm parameters.
+
+    Preset keyword (auto/peak/warmup/melodic/dark/closing, last one wins),
+    then directives: 'bpm A-B', 'end NNN', 'start NNN', and modifiers
+    'hype' (peak 1.0, higher opening), 'chill' (lower arc), 'minor'/
+    'major' (tonality bias). Unknown words are ignored, so free-text
+    prompts work — the LLM layer (optional) only refines track choice.
+    """
     base = dict(VIBES["auto"])
     if not spec:
         return base
-    words = [w.lower() for w in spec.replace(",", " ").split()]
-    used = False
-    for w in words:
+    import re
+
+    words = [w.lower() for w in re.split(r"[,\s]+", spec.strip()) if w]
+    i = 0
+    while i < len(words):
+        w = words[i]
         if w in VIBES:
             base = dict(VIBES[w])
-            used = True
+        elif w == "bpm" and i + 1 < len(words) and "-" in words[i + 1]:
+            a, b = words[i + 1].split("-", 1)
+            if a.replace(".", "").isdigit() and b.replace(".", "").isdigit():
+                base["bpm"] = (float(a), float(b))
+            i += 1
+        elif w in ("end", "start") and i + 1 < len(words) \
+                and words[i + 1].replace(".", "").isdigit():
+            lo, hi = base["bpm"]
+            v = float(words[i + 1])
+            base["bpm"] = (lo, v) if w == "end" else (v, hi)
+            i += 1
+        elif w == "hype":
+            base.update(start=min(1.0, base["start"] + 0.2), peak=1.0,
+                        peak_at=0.55)
+        elif w in ("chill", "soft"):
+            base.update(start=max(0.1, base["start"] - 0.15),
+                        peak=min(base["peak"], 0.75),
+                        end=max(0.2, base["end"] - 0.1))
+        elif w == "minor":
+            base["minor_bias"] = 0.6
+        elif w == "major":
+            base["minor_bias"] = 0.0
+        i += 1
     return base
 
 
@@ -149,9 +181,52 @@ def _transition_type(cur: TrackCard, nxt: TrackCard, score: float) -> str:
     return "blend"
 
 
+def llm_order(library: list[dict], prompt: str) -> list[str]:
+    """Optional external LLM hook: PHASELOCK_LLM_CMD.
+
+    The command receives {"library": [...cards], "prompt": str} on stdin and
+    prints a JSON array of paths (the desired order). Any failure returns []
+    and planning falls back to the built-in search — the LLM refines, never
+    breaks, the pipeline.
+    """
+    import json
+    import os
+    import subprocess
+
+    cmd = os.environ.get("PHASELOCK_LLM_CMD")
+    if not cmd:
+        return []
+    try:
+        p = subprocess.run(
+            cmd, input=json.dumps({"library": library, "prompt": prompt}),
+            capture_output=True, text=True, shell=True, timeout=180,
+        )
+        lines = [ln for ln in p.stdout.strip().splitlines() if ln.strip()]
+        arr = json.loads(lines[-1]) if lines else []
+        return [x for x in arr if isinstance(x, str)]
+    except Exception:
+        return []
+
+
+def _compat_repair(seq: list[TrackCard]) -> list[TrackCard]:
+    """Drop tracks that would clash with the previous kept one."""
+    out: list[TrackCard] = []
+    for c in seq:
+        if out:
+            drift = abs(c.bpm - out[-1].bpm) / out[-1].bpm
+            if compat(out[-1].camelot, c.camelot) <= 0 or drift > 0.06:
+                continue
+        out.append(c)
+    return out
+
+
 def plan_set(cards: list[TrackCard], duration_min: float, vibe: str | None = None,
-             pool_filter: bool = True) -> dict:
-    """Plan a set. Returns the set dict consumed by the renderer."""
+             pool_filter: bool = True, order: list[str] | None = None) -> dict:
+    """Plan a set. Returns the set dict consumed by the renderer.
+
+    `order` (e.g. from the LLM hook) pins the sequence; incompatible tracks
+    are dropped rather than allowed to clash.
+    """
     v = resolve_vibe(vibe)
     lo, hi = v["bpm"]
     pool = [c for c in cards if lo <= c.bpm <= hi] if pool_filter else list(cards)
@@ -163,7 +238,15 @@ def plan_set(cards: list[TrackCard], duration_min: float, vibe: str | None = Non
     if len(pool) < 2:
         raise ValueError("need at least 2 analyzable tracks in range")
 
-    n = int(np.clip(round(duration_min / DEFAULT_TRACK_MIN), 2, len(pool)))
+    forced = None
+    if order:
+        by_path = {c.path: c for c in pool}
+        forced = _compat_repair([by_path[p] for p in order if p in by_path])
+        if len(forced) < 2:
+            forced = None
+
+    n = len(forced) if forced else int(
+        np.clip(round(duration_min / DEFAULT_TRACK_MIN), 2, len(pool)))
     arc = _arc(n, v)
     play_sec = duration_min * 60.0 / n
 
@@ -188,34 +271,37 @@ def plan_set(cards: list[TrackCard], duration_min: float, vibe: str | None = Non
         rising = 0.3 if (slot <= _arc_peak(n, v) and cand.bpm >= cur.bpm) else 0.0
         return round(score + energy_fit - 1.5 * bpm_pen + rising, 6)
 
-    # beam search, deterministic
-    beam: list[tuple[list[TrackCard], float]] = []
-    for c in sorted(pool, key=lambda c: c.path):
-        beam.append(([c], step_score(None, c, 0)))
-    beam.sort(key=lambda st: (-st[1], st[0][0].path))
-    beam = beam[:6]
+    if forced:
+        best = (forced, 0.0)
+    else:
+        # beam search, deterministic
+        beam: list[tuple[list[TrackCard], float]] = []
+        for c in sorted(pool, key=lambda c: c.path):
+            beam.append(([c], step_score(None, c, 0)))
+        beam.sort(key=lambda st: (-st[1], st[0][0].path))
+        beam = beam[:6]
 
-    best: tuple[list[TrackCard], float] | None = None
-    for slot in range(1, n):
-        nxt: list[tuple[list[TrackCard], float]] = []
-        for seq, total in beam:
-            cur = seq[-1]
-            used = {c.path for c in seq}
-            for cand in pool:
-                if cand.path in used:
-                    continue
-                sc = step_score(cur, cand, slot)
-                if sc is None:
-                    continue
-                nxt.append((seq + [cand], total + sc))
-        if not nxt:  # dead end: fall back to best partial set
-            break
-        nxt.sort(key=lambda st: (-st[1], st[0][-1].path))
-        beam = nxt[:6]
-        if len(beam[0][0]) == n:
-            best = beam[0]
-    if best is None:
-        best = max(beam, key=lambda st: (len(st[0]), st[1]))
+        best = None
+        for slot in range(1, n):
+            nxt: list[tuple[list[TrackCard], float]] = []
+            for seq, total in beam:
+                cur = seq[-1]
+                used = {c.path for c in seq}
+                for cand in pool:
+                    if cand.path in used:
+                        continue
+                    sc = step_score(cur, cand, slot)
+                    if sc is None:
+                        continue
+                    nxt.append((seq + [cand], total + sc))
+            if not nxt:  # dead end: fall back to best partial set
+                break
+            nxt.sort(key=lambda st: (-st[1], st[0][-1].path))
+            beam = nxt[:6]
+            if len(beam[0][0]) == n:
+                best = beam[0]
+        if best is None:
+            best = max(beam, key=lambda st: (len(st[0]), st[1]))
     seq = best[0]
 
     # tempo chain + per-track details
