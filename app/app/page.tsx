@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Track = {
   path: string;
@@ -34,9 +34,124 @@ type Job = {
 };
 
 const VIBES = ["auto", "peak", "warmup", "melodic", "dark", "closing"];
+const TRANSITIONS = [
+  "blend",
+  "bass_swap",
+  "filter_sweep",
+  "drum_drop",
+  "acapella_overlay",
+];
 const name = (p: string) => p.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? p;
 const fmtDur = (s: number | null) =>
   s == null ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+/* ---------- waveform + energy detail view ---------- */
+
+function Curves({ path }: { path: string }) {
+  const [data, setData] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const ref = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    setData(null);
+    setErr(null);
+    fetch(`/api/curves?path=${encodeURIComponent(path)}`)
+      .then((r) => r.json())
+      .then((d) => (d.error ? setErr(d.error) : setData(d)))
+      .catch(() => setErr("curves unavailable"));
+  }, [path]);
+
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv || !data?.waveform) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth * dpr;
+    const h = 180 * dpr;
+    cv.width = w;
+    cv.height = h;
+    const g = cv.getContext("2d")!;
+    g.clearRect(0, 0, w, h);
+
+    const { min, max } = data.waveform;
+    const n = min.length;
+    const mid = h / 2;
+    g.fillStyle = "rgba(52,211,153,0.55)";
+    for (let i = 0; i < n; i++) {
+      const x = (i / n) * w;
+      const y0 = mid - max[i] * mid * 0.95;
+      const y1 = mid - min[i] * mid * 0.95;
+      g.fillRect(x, Math.min(y0, y1), Math.max(1, w / n), Math.max(1, y1 - y0));
+    }
+
+    // energy curve (dB → height)
+    const ec: number[] = data.energy_curve_db ?? [];
+    if (ec.length) {
+      g.strokeStyle = "rgba(56,189,248,0.9)";
+      g.lineWidth = 1.5 * dpr;
+      g.beginPath();
+      for (let i = 0; i < ec.length; i++) {
+        const x = (i / ec.length) * w;
+        const y = h - ((ec[i] + 60) / 60) * h * 0.92;
+        i ? g.lineTo(x, y) : g.moveTo(x, y);
+      }
+      g.stroke();
+    }
+
+    // downbeat ticks
+    const beats: number[] = data.beats ?? [];
+    const phase = data.downbeat_phase;
+    const total = data.energy_curve_db
+      ? (ec.length * 0.5)
+      : beats[beats.length - 1] ?? 1;
+    if (beats.length && phase != null) {
+      g.strokeStyle = "rgba(244,114,182,0.5)";
+      g.lineWidth = dpr;
+      for (let i = phase; i < beats.length; i += 16) {
+        const x = (beats[i] / total) * w;
+        g.beginPath();
+        g.moveTo(x, 0);
+        g.lineTo(x, 8 * dpr);
+        g.stroke();
+      }
+    }
+  }, [data]);
+
+  if (err) return <p className="text-xs text-zinc-500">{err}</p>;
+  if (!data) return <p className="text-xs text-zinc-500">loading curves…</p>;
+  return <canvas ref={ref} className="w-full rounded bg-zinc-950" style={{ height: 180 }} />;
+}
+
+function TrackDetail({ track, onClose }: { track: Track; onClose: () => void }) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-zinc-200">
+            {name(track.path)}
+          </p>
+          <p className="font-mono text-xs text-zinc-500">
+            {track.bpm?.toFixed(1)} bpm · {track.key_name} · {track.camelot} ·{" "}
+            {track.loudness_lufs?.toFixed(1)} LUFS · {fmtDur(track.duration_s)}
+          </p>
+        </div>
+        <button
+          onClick={onClose}
+          className="rounded border border-zinc-700 px-2 text-xs text-zinc-400 hover:border-emerald-500 hover:text-emerald-300"
+        >
+          close
+        </button>
+      </div>
+      <Curves path={track.path} />
+      <audio
+        controls
+        src={`/api/preview?path=${encodeURIComponent(track.path)}`}
+        className="mt-2 w-full"
+      />
+    </div>
+  );
+}
+
+/* ---------- main booth ---------- */
 
 export default function Booth() {
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -53,6 +168,8 @@ export default function Booth() {
   const [setPath, setSetPath] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Track | null>(null);
+  const [edits, setEdits] = useState<Record<number, string>>({});
 
   const load = () =>
     fetch("/api/tracks")
@@ -104,6 +221,7 @@ export default function Booth() {
     setPlanning(true);
     setError(null);
     setJob(null);
+    setEdits({});
     try {
       const r = await fetch("/api/plan", {
         method: "POST",
@@ -121,6 +239,33 @@ export default function Booth() {
       setError(String(e));
     } finally {
       setPlanning(false);
+    }
+  };
+
+  const saveEdits = async () => {
+    if (!setPath || !set) return;
+    const payload = Object.entries(edits).map(([index, type]) => ({
+      index: Number(index),
+      type,
+    }));
+    const r = await fetch("/api/plan/edit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ setPath, edits: payload }),
+    });
+    if (r.ok) {
+      const { applied } = await r.json();
+      setSet({
+        ...set,
+        tracks: set.tracks.map((t, i) =>
+          edits[i] && t.transition_out
+            ? { ...t, transition_out: { ...t.transition_out, type: edits[i] } }
+            : t,
+        ),
+      });
+      setEdits({});
+      if (applied !== payload.length)
+        setError("some edits were rejected (bad index/type)");
     }
   };
 
@@ -159,6 +304,8 @@ export default function Booth() {
     blend: "text-sky-300",
     bass_swap: "text-fuchsia-300",
     filter_sweep: "text-amber-300",
+    drum_drop: "text-red-300",
+    acapella_overlay: "text-violet-300",
   };
 
   return (
@@ -203,7 +350,7 @@ export default function Booth() {
               className="w-40 rounded bg-zinc-950 px-2 py-1 text-xs text-zinc-300 outline-none ring-1 ring-zinc-800 focus:ring-emerald-600"
             />
           </div>
-          <div className="max-h-[60vh] overflow-auto">
+          <div className="max-h-[62vh] overflow-auto">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-zinc-900">
                 <tr>
@@ -219,7 +366,10 @@ export default function Booth() {
                 {shown.map((t) => (
                   <tr
                     key={t.path}
-                    className="border-t border-zinc-800/60 hover:bg-zinc-800/40"
+                    onClick={() => setSelected(t)}
+                    className={`cursor-pointer border-t border-zinc-800/60 hover:bg-zinc-800/40 ${
+                      selected?.path === t.path ? "bg-zinc-800/60" : ""
+                    }`}
                   >
                     <td className="max-w-[220px] truncate px-2 py-1 text-zinc-300">
                       {name(t.path)}
@@ -246,6 +396,10 @@ export default function Booth() {
 
         {/* Planner + setlist */}
         <section className="space-y-4">
+          {selected && (
+            <TrackDetail track={selected} onClose={() => setSelected(null)} />
+          )}
+
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
             <h2 className="mb-3 text-sm font-semibold tracking-wide text-zinc-300">
               PLAN A SET
@@ -291,34 +445,61 @@ export default function Booth() {
                 <h2 className="text-sm font-semibold tracking-wide text-zinc-300">
                   SET · {set.vibe} · {set.tracks.length} tracks
                 </h2>
-                <button
-                  onClick={render}
-                  disabled={job?.status === "running"}
-                  className="rounded bg-fuchsia-600 px-3 py-1 text-xs font-semibold text-zinc-950 hover:bg-fuchsia-500 disabled:opacity-40"
-                >
-                  {job?.status === "running" ? "rendering…" : "render mix"}
-                </button>
+                <div className="flex items-center gap-2">
+                  {Object.keys(edits).length > 0 && (
+                    <button
+                      onClick={saveEdits}
+                      className="rounded bg-sky-600 px-2 py-1 text-xs font-semibold text-zinc-950 hover:bg-sky-500"
+                    >
+                      save edits ({Object.keys(edits).length})
+                    </button>
+                  )}
+                  <button
+                    onClick={render}
+                    disabled={job?.status === "running"}
+                    className="rounded bg-fuchsia-600 px-3 py-1 text-xs font-semibold text-zinc-950 hover:bg-fuchsia-500 disabled:opacity-40"
+                  >
+                    {job?.status === "running" ? "rendering…" : "render mix"}
+                  </button>
+                </div>
               </div>
               <ol className="max-h-72 overflow-auto p-2 font-mono text-xs">
-                {set.tracks.map((t, i) => (
-                  <li key={t.path} className="flex items-center gap-2 px-1 py-1">
-                    <span className="w-5 text-right text-zinc-600">{i + 1}</span>
-                    <span className="flex-1 truncate text-zinc-300">
-                      {name(t.path)}
-                    </span>
-                    <span className="tabular-nums text-zinc-400">
-                      {t.mix_bpm.toFixed(1)}
-                    </span>
-                    <span className="text-emerald-400/80">{t.camelot}</span>
-                    {t.transition_out && (
-                      <span
-                        className={`text-[10px] ${TR_COLORS[t.transition_out.type] ?? "text-zinc-500"}`}
-                      >
-                        ↦ {t.transition_out.type}
+                {set.tracks.map((t, i) => {
+                  const cur = t.transition_out;
+                  const edited = edits[i];
+                  return (
+                    <li
+                      key={t.path}
+                      className="flex items-center gap-2 px-1 py-1"
+                    >
+                      <span className="w-5 text-right text-zinc-600">{i + 1}</span>
+                      <span className="flex-1 truncate text-zinc-300">
+                        {name(t.path)}
                       </span>
-                    )}
-                  </li>
-                ))}
+                      <span className="tabular-nums text-zinc-400">
+                        {t.mix_bpm.toFixed(1)}
+                      </span>
+                      <span className="text-emerald-400/80">{t.camelot}</span>
+                      {cur && (
+                        <select
+                          value={edited ?? cur.type}
+                          onChange={(e) =>
+                            setEdits((s) => ({ ...s, [i]: e.target.value }))
+                          }
+                          className={`rounded bg-zinc-950 px-1 py-0.5 text-[10px] ring-1 ring-zinc-800 ${
+                            TR_COLORS[edited ?? cur.type] ?? "text-zinc-500"
+                          }`}
+                        >
+                          {TRANSITIONS.map((v) => (
+                            <option key={v} value={v}>
+                              ↦ {v}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </li>
+                  );
+                })}
               </ol>
             </div>
           )}

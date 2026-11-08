@@ -276,5 +276,38 @@ def tracks(db_path: str | None) -> None:
     click.echo(_json.dumps([dict(r) for r in rows]))
 
 
+@main.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--db", "db_path", default=None)
+@click.option("--cache", "cache_dir", default=None)
+def curves(path: str, db_path: str | None, cache_dir: str | None) -> None:
+    """Sidecar curves/grids for one track, as JSON (for the booth)."""
+    import json as _json
+
+    from . import sidecar
+
+    conn = _db(db_path)
+    cache = Path(cache_dir) if cache_dir else DEFAULT_CACHE
+    row = conn.execute(
+        "SELECT file_size, mtime FROM tracks WHERE path = ?",
+        (str(Path(path).resolve()),),
+    ).fetchone()
+    if row is None:
+        click.echo(_json.dumps({"error": "not in library"}))
+        raise SystemExit(1)
+    fp = sidecar.fingerprint(path, row["file_size"], row["mtime"])
+    sc = sidecar.load(cache, fp)
+    if sc is None:
+        click.echo(_json.dumps({"error": "no sidecar"}))
+        raise SystemExit(1)
+    click.echo(_json.dumps({
+        "beats": sc.get("beats", []),
+        "downbeat_phase": sc.get("downbeat_phase"),
+        "energy_curve_db": sc.get("energy_curve_db", []),
+        "novelty": sc.get("novelty", []),
+        "waveform": sc.get("waveform"),
+    }))
+
+
 if __name__ == "__main__":
     main()

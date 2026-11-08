@@ -3,10 +3,33 @@
 *Live project state. Update at the end of every session. A new session starts
 by reading this file.*
 
-## Current state (2026-11-08)
+## Current state (2026-11-08, evening — v2 in flight)
 
-**Status: SOFTWARE COMPLETE — all seven phases done, all gates passed,
-full regression green.** Same day as scaffold; pushed to GitHub.
+**Status: v1 complete (all 7 phases + gates); v2 nearly done.** Same day.
+
+**v2 additions:**
+- Full real library analyzed: 110 tracks (98 of 99 Liked Songs — one unicode
+  filename lost in copy; 10 synthetic; 2 stem tests; 15 duplicate
+  real_sample rows removed).
+- New transitions: drum_drop (drum-stem build → hard drop on the downbeat)
+  and acapella_overlay (vocals stem over a blend), both with graceful
+  degradation; planner assigns them when the incoming track has stems.
+- Booth v2: track detail (canvas waveform + energy curve + downbeat ticks),
+  preview streaming with Range support (DB-validated), transition-type
+  editing + save. `phaselock curves PATH` CLI backs the detail view.
+- v2 gates + full regression green.
+
+**In flight:** Demucs separating 12 tracks of the showcase set
+(`data/stems_job.log`); then re-plan (upgrades transition types) and render
+the 60-min all-real-music showcase (`data/sets/showcase_real.json` —
+Rasputin → Forbidden Voices, Camelot 11A→8B→3A, energy 0.23→0.99).
+
+**The booth:** rebuilt + restarted, http://localhost:3100 (new build live).
+
+## Next steps
+
+- Render showcase set (WAV + MP3) once stems finish; listen
+- v3 ideas in PLAN.md (live dual-deck is the big one)
 
 **What exists:**
 - **Analysis core** (`core/phaselock/`): BPM (sub-frame via beat-index

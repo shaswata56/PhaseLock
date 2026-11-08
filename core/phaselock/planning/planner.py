@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -92,6 +93,7 @@ class TrackCard:
     beats: list[float] = field(default_factory=list)
     downbeat_phase: int | None = None
     energy: float = 0.5  # percentile among planned library, set by load
+    has_stems: bool = False
 
     @property
     def beat_sec(self) -> float:
@@ -107,21 +109,29 @@ class TrackCard:
 
 
 def load_library(conn, cache_dir) -> list[TrackCard]:
-    """TrackCards for every analyzed track; sidecar curves joined in."""
+    """TrackCards for every analyzed track; sidecar curves + stems state."""
+    from .. import stems as stems_mod
+
     rows = conn.execute(
         "SELECT path, file_size, mtime, bpm, key_name, camelot, duration_s, "
         "loudness_lufs, energy_mean FROM tracks "
         "WHERE analysis_status='ok' AND bpm IS NOT NULL ORDER BY path"
     ).fetchall()
+    stems_root = Path(cache_dir) / "stems" if cache_dir else None
     cards = []
     for r in rows:
         fp = sidecar.fingerprint(r["path"], r["file_size"], r["mtime"])
         sc = sidecar.load(cache_dir, fp) or {}
+        has_stems = False
+        if stems_root is not None:
+            has_stems = not stems_mod.is_stale(
+                stems_root, fp, r["file_size"], r["mtime"])
         cards.append(TrackCard(
             path=r["path"], bpm=r["bpm"], key_name=r["key_name"],
             camelot=r["camelot"], duration_s=r["duration_s"],
             lufs=r["loudness_lufs"], energy_mean=r["energy_mean"],
             beats=sc.get("beats", []), downbeat_phase=sc.get("downbeat_phase"),
+            has_stems=has_stems,
         ))
     _assign_energy_percentiles(cards)
     return cards
@@ -174,9 +184,16 @@ def _pick_in_out(card: TrackCard, play_sec: float, tail_beats: int = 8):
 
 
 def _transition_type(cur: TrackCard, nxt: TrackCard, score: float) -> str:
-    if score >= 1.0 and nxt.energy >= cur.energy:
+    """Pick the transition move. Stem moves need stems on the incoming side
+    (the renderer degrades gracefully when they're missing)."""
+    de = nxt.energy - cur.energy
+    if score >= 0.9 and nxt.has_stems and de >= 0.2:
+        return "drum_drop"          # drum build over the outgoing, then drop
+    if score >= 0.9 and nxt.has_stems and abs(de) < 0.15:
+        return "acapella_overlay"   # vocal ride over a level blend
+    if score >= 1.0 and de >= 0:
         return "bass_swap"
-    if nxt.energy > cur.energy + 0.25:
+    if de > 0.25:
         return "filter_sweep"
     return "blend"
 

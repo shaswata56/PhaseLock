@@ -185,10 +185,24 @@ clashes after repair; absent hook falls back.
 **All seven phases complete 2026-11-08.** Every phase passed its acceptance
 gates; full regression (`core/tests/test_*.py`) is green.
 
-## v2 ideas (unplanned)
+## v2 (2026-11-08, same day)
 
-- Booth: waveform + energy-curve detail view, per-track preview streaming,
-  transition-type editing, live dual-deck Web Audio mode with stem toggles
-- MusicGen/Riffusion transition textures (generative layer)
-- Drum-only drops, acapella overlays (stems exist; transitions not built)
+- [x] Full 99-track real library analyzed (98 ok, 1 unicode filename lost in copy)
+- [x] **drum_drop** transition: 16-beat drum-stem build over the outgoing,
+      hard drop to incoming full on the downbeat (needs stems; degrades to
+      filter_sweep)
+- [x] **acapella_overlay** transition: vocals stem rides a half-sine window
+      over a level blend (needs stems; degrades to blend)
+- [x] Planner assigns stem moves when the incoming track has stems
+- [x] Booth v2: track detail view (canvas waveform + energy curve + downbeat
+      ticks), per-track preview streaming (Range/206, DB-validated paths),
+      per-transition type editing with save
+- [x] v2 transition gates + full regression green
+- [ ] Showcase 60-min all-real-music set rendered with stems (running)
+
+## v3 ideas (unplanned)
+
+- Booth: live dual-deck Web Audio mode with stem toggles
+- MusicGen/Riffusion transition textures
 - Opus stem cache option; Cloud Run GPU batch separation
+- Library dedupe by audio fingerprint, not path
