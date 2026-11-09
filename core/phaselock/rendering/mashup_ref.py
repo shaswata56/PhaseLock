@@ -23,11 +23,11 @@ import numpy as np
 
 from .. import sidecar, stems as stems_mod
 from .engine import CEILING, _limiter
-from .mashup import _VocalRun, _edge_fades, _warp
+from .mashup import _VocalRun, _edge_fades, _riser, _warp
 
 SR = 44100
 OTHER_HP_HZ = 90.0      # melody stem leaves the sub to the bass stem
-VOCAL_OVER_DB = 1.0     # topline above the local bed RMS
+VOCAL_OVER_DB = 2.0     # topline above the local bed RMS
 PUMP_DEPTH = 0.10       # light glue only — the master already pumps
 PUMP_DEPTH_VOC = 0.08   # gentle pump on the topline
 PUMP_TAU_S = 0.135      # pump recovery time constant
@@ -201,6 +201,10 @@ def _activity(x: np.ndarray) -> np.ndarray:
     return e
 
 
+def role_of(s: dict) -> str:
+    return s["role"]
+
+
 def _declick(x: np.ndarray) -> None:
     edge = max(1, int(EDGE_S * SR))
     n = x.shape[-1]
@@ -315,23 +319,6 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
     sos_lo2 = butter(4, 200.0, btype="low", fs=SR, output="sos")
     for s in secs:
         i0, n, o0, mode = s["i0"], s["n"], s["out0"], s["mode"]
-        # untouched master wherever the base's own vocal is low enough to
-        # either sing the gap (phrase trading) or sit under the topline;
-        # stem artifacts only live where they're masked by the topline
-        v_mono = base_st["vocals"].mean(axis=0)[i0:i0 + n]             if base_st["vocals"].ndim > 1 else base_st["vocals"][i0:i0 + n]
-        i_mono = (bed_mono_src[i0:i0 + n] if bed_mono_src.size >= i0 + n
-                  else np.zeros(n))
-        v_db = 20 * np.log10(float(np.sqrt((v_mono ** 2).mean()))
-                             / max(float(np.sqrt((i_mono ** 2).mean())), 1e-18))
-        if ((s["voc_role"] is None and mode != "strip") or v_db < -12.0)                 and mode != "strip" and orig is not None                 and orig.shape[-1] >= i0 + n:
-            seg = orig[:, i0:i0 + n].astype(np.float64).copy()
-            _declick(seg)
-            bed[:, o0:o0 + n] += seg
-            s["orig"] = True
-            report(f"bed[{s['role']}]: ORIGINAL master "
-                   f"(own vocal {v_db:.0f} dB, {'trading' if s['voc_role'] is None else 'under topline'})")
-            continue
-        s["orig"] = False
         stem_g = {"drums": 0.12, "bass": 0.0} if mode == "strip" else {}
         sec_g = 10 ** (-5.0 / 20.0) if mode == "soft" else 1.0
         rel = [t - s["a_s"] for t in beats if s["a_s"] <= t < s["b_s"]]
@@ -340,13 +327,35 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
         for name in ("drums", "bass", "other"):
             seg = stems_all[name][:, i0:i0 + n].copy() * stem_g.get(name, 1.0)
             if name == "other":
-                seg = np.stack([sosfiltfilt(sos_hp, c) for c in seg])
+                if role_of(s) == "build":
+                    # synthesized build: the chords open up under a riser —
+                    # a lowpass sweep from 250 Hz to open across the section
+                    w = seg.shape[-1]
+                    x = np.linspace(0.0, 1.0, 400)
+                    cuts = 250.0 * (16000.0 / 250.0) ** x
+                    step = max(1, w // 400)
+                    for k in range(0, w, step):
+                        kk = min(k, w - 1)
+                        fc = min(cuts[min(k // step, 399)], 16000.0)
+                        sosw = butter(2, min(fc / (SR / 2), 0.95),
+                                      btype="low", fs=SR, output="sos")
+                        seg[:, kk:kk + step] = sosfiltfilt(sosw, seg[:, kk:kk + step])
+                else:
+                    seg = np.stack([sosfiltfilt(sos_hp, c) for c in seg])
+            if name == "bass" and role_of(s) == "build":
+                # bass enters only for the final quarter of the build
+                q = 3 * n // 4
+                seg = seg * np.concatenate(
+                    [np.zeros(q), np.linspace(0, 1, n - q) ** 0.7])[None, :]
             seg_sum += seg
         _declick(seg_sum)
-        # light pump on the low band only (the master's own pump survives)
         lo = np.stack([sosfiltfilt(sos_lo2, c) for c in seg_sum])
         seg_sum = lo * p + (seg_sum - lo) * np.sqrt(p)
         bed[:, o0:o0 + n] += seg_sum * sec_g
+        if role_of(s) == "build":  # white-noise riser into the drop
+            r = _riser(n, base_bpm, SR, seed=777)
+            scale = 0.35 * float(np.sqrt((seg_sum ** 2).mean() + 1e-12))                 / max(float(np.sqrt((r ** 2).mean() + 1e-12)), 1e-9)
+            bed[:, o0:o0 + n] += r * scale
 
     # ---- topline placement (donor's hot run, roles per section)
     placements = []
