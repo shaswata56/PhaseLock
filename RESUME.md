@@ -3,9 +3,9 @@
 *Live project state. Update at the end of every session. A new session starts
 by reading this file.*
 
-## Current state (2026-11-09, early hours — v2.8)
+## Current state (2026-11-09 — v2.9)
 
-**Status: v1 + v2 + musically-verified mashup (v7) complete. Key detector fixed.**
+**Status: v1 + v2 + original-master hybrid mashup (v8) complete.**
 
 **v2 delivered:**
 - Full real library: 110 tracks (98 of 99 Liked Songs; 1 unicode filename
@@ -107,6 +107,18 @@ consonance check (donor melody PCs vs the bed's measured chord loop)
 BEFORE rendering. v7: Find You (Eb maj) × This Is What It Feels Like
 (Ab maj, 0.73 consonance) — `renders/mashup_findyou_tiwifl_v7.mp3`,
 0 clicks, LUFS −14.6, vision clean w/ distinct register lanes.
+
+**v2.9 (v8, after "still weird and below quality — listen yourself"):**
+A/B'd the same Find You drop as original master vs stems re-sum through
+the rig: stems = ~70% master quality (smeared kicks, vocal-holes in the
+1-4k mids, phasey/washed) — that was the "below quality." Plus my added
+pump stacked on the master's baked pump (AM 0.332 vs 0.257). v8: hybrid
+bed — UNTOUCHED ORIGINAL MASTER wherever the base's own vocal is low
+enough (builds = phrase trading; final = natural −15 dB bleed under the
+topline); stems only where the topline masks the holes; added pump
+removed; gentle limiting. Vision A/B: v8 final ≈ 95% master quality.
+`renders/mashup_findyou_tiwifl_v8.mp3`. LESSON: never judge a re-synth
+against itself — A/B against the source master.
 
 **Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
 curves, preview 200/206, plan/edit, build).
