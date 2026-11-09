@@ -118,13 +118,15 @@ def extract_parts(sub_db: np.ndarray) -> dict | None:
     drop1 = best_sub(max(others, key=lambda r: means[r]), 16) if others         else (max(0, final[0] - 24), max(0, final[0] - 8))
     taken.append(drop1)
 
-    # groove: medium-energy window clear of every run; if the grid is too
-    # crowded, drop1's own slice softened is the fallback groove
+    # groove: a real medium-energy window (verse) — may graze the build's
+    # bars (parts play at different output times), never the runs themselves
     cands = []
     for i in range(0, n - 15, 2):
-        if not free(i, i + 16):
-            continue
+        if i < drop1[0] - 1 and i + 16 > drop1[0]:
+            continue  # don't reuse drop1's material
         if any(i < r[1] and i + 16 > r[0] for r in runs):
+            continue
+        if not free(i, i + 16) and not (build[0] - 16 <= i < build[1]):
             continue
         cands.append((float(np.mean(sub_db[i:i + 16])), i))
     if cands and max(cands)[0] > peak - 22.0:  # a real medium window exists
@@ -320,12 +322,24 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
     for s in secs:
         i0, n, o0, mode = s["i0"], s["n"], s["out0"], s["mode"]
         stem_g = {"drums": 0.12, "bass": 0.0} if mode == "strip" else {}
-        sec_g = 10 ** (-5.0 / 20.0) if mode == "soft" else 1.0
+        sec_g = 10 ** (-4.0 / 20.0) if mode == "soft" else 1.0
         rel = [t - s["a_s"] for t in beats if s["a_s"] <= t < s["b_s"]]
         p = _pump_gain(rel, n, PUMP_DEPTH)
         seg_sum = np.zeros((2, n), dtype=np.float64)
+        soft = mode == "soft"
         for name in ("drums", "bass", "other"):
             seg = stems_all[name][:, i0:i0 + n].copy() * stem_g.get(name, 1.0)
+            if name == "other" and soft:
+                # filtered-drop intro: the chords open from 700 Hz upward
+                w = seg.shape[-1]
+                cuts = 700.0 * (16000.0 / 700.0) ** np.linspace(0, 1, 300)
+                step = max(1, w // 300)
+                for k in range(0, w, step):
+                    fc = min(cuts[min(k // step, 299)], 16000.0)
+                    sosw = butter(2, min(fc / (SR / 2), 0.95),
+                                  btype="low", fs=SR, output="sos")
+                    e = min(k + step, w)
+                    seg[:, k:e] = sosfiltfilt(sosw, seg[:, k:e])
             if name == "other":
                 if role_of(s) == "build":
                     # synthesized build: the chords open up under a riser —
@@ -368,6 +382,10 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
         win_t, _L = (run.solo() if voc_role == "solo"
                      else run.take(s["n_phr"]))
         length_s = s["n"] / SR
+        entry_off = 4 * (4 * 60.0 / base_bpm) if s["role"] == "groove"             and s is secs[0] else 0.0
+        if entry_off and length_s - entry_off > 8.0:
+            length_s -= entry_off
+            o0_shift = int(entry_off * SR)
         if abs(rho_d - 1.0) < 0.002:
             src = int(win_t * SR)
             seg = np.stack([c[src:src + int(length_s * SR)]
@@ -382,13 +400,15 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
                         src_start=int(round(win_t * SR)))
         _edge_fades(seg)
         o0, n = s["out0"], s["n"]
+        if entry_off and length_s > 8.0:
+            o0 += o0_shift  # groove plays 4 bars before the topline enters
         bed_rms = float(np.sqrt((bed[:, o0:o0 + n] ** 2).mean() + 1e-18))
         vr = float(np.sqrt((seg ** 2).mean() + 1e-18))
         g = bed_rms / max(vr, 1e-9) * 10 ** (VOCAL_OVER_DB / 20)
         m = min(n, seg.shape[-1])
         voc_mix[:, o0:o0 + m] += seg[:, :m] * g
         placements.append({"role": voc_role, "section": s["role"],
-                           "at_s": round(s["out_a"], 2),
+                           "at_s": round(o0 / SR, 2),
                            "length_s": round(length_s, 2)})
         report(f"topline {voc_role} over {s['role']} @ {s['out_a']:.0f}s "
                f"({length_s:.0f}s, gain {g:.2f})")
