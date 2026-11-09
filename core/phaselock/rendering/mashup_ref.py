@@ -27,12 +27,12 @@ from .mashup import _VocalRun, _edge_fades, _warp
 
 SR = 44100
 OTHER_HP_HZ = 90.0      # melody stem leaves the sub to the bass stem
-VOCAL_OVER_DB = 2.5     # topline above the local bed RMS
-PUMP_DEPTH = 0.32       # low-band duck under each kick
-PUMP_DEPTH_VOC = 0.15   # gentle pump on the topline
+VOCAL_OVER_DB = 1.0     # topline above the local bed RMS
+PUMP_DEPTH = 0.10       # light glue only — the master already pumps
+PUMP_DEPTH_VOC = 0.08   # gentle pump on the topline
 PUMP_TAU_S = 0.135      # pump recovery time constant
 DUCK_DB = 1.7           # bed dip under active vocal phrases
-PLATE_WET_DB = -13.0    # reverb wet level rel. dry topline
+PLATE_WET_DB = -16.0    # reverb wet level rel. dry topline
 EDGE_S = 0.005          # de-click at phrase-aligned hard cuts
 
 
@@ -238,6 +238,8 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
 
     base_st, base_bpm, base_side = stems_of(base_path)
     don_st, don_bpm, don_side = stems_of(donor_path)
+    from .. import decode as _dec
+    orig = _dec.load_stereo(base_path)  # untouched master for vocal-trade gaps
 
     from scipy.signal import butter, sosfiltfilt
 
@@ -275,6 +277,7 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
     stems_all = {k: np.stack(list(base_st[k])).astype(np.float64)
                  for k in ("drums", "bass", "other")}
     min_len = min(v.shape[-1] for v in stems_all.values())
+    bed_mono_src = sum(stems_all[k].mean(axis=0) for k in stems_all)  # sum = the actual bed
 
     run = _VocalRun(don_st["vocals"], don_side.get("beats", []),
                     don_side.get("downbeat_phase"))
@@ -309,16 +312,41 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
     # mix each stem plane section-by-section (native rate, hard cuts)
     bed = np.zeros((2, n_out), dtype=np.float64)
     voc_mix = np.zeros((2, n_out), dtype=np.float64)
+    sos_lo2 = butter(4, 200.0, btype="low", fs=SR, output="sos")
     for s in secs:
         i0, n, o0, mode = s["i0"], s["n"], s["out0"], s["mode"]
+        # untouched master wherever the base's own vocal is low enough to
+        # either sing the gap (phrase trading) or sit under the topline;
+        # stem artifacts only live where they're masked by the topline
+        v_mono = base_st["vocals"].mean(axis=0)[i0:i0 + n]             if base_st["vocals"].ndim > 1 else base_st["vocals"][i0:i0 + n]
+        i_mono = (bed_mono_src[i0:i0 + n] if bed_mono_src.size >= i0 + n
+                  else np.zeros(n))
+        v_db = 20 * np.log10(float(np.sqrt((v_mono ** 2).mean()))
+                             / max(float(np.sqrt((i_mono ** 2).mean())), 1e-18))
+        if ((s["voc_role"] is None and mode != "strip") or v_db < -12.0)                 and mode != "strip" and orig is not None                 and orig.shape[-1] >= i0 + n:
+            seg = orig[:, i0:i0 + n].astype(np.float64).copy()
+            _declick(seg)
+            bed[:, o0:o0 + n] += seg
+            s["orig"] = True
+            report(f"bed[{s['role']}]: ORIGINAL master "
+                   f"(own vocal {v_db:.0f} dB, {'trading' if s['voc_role'] is None else 'under topline'})")
+            continue
+        s["orig"] = False
         stem_g = {"drums": 0.12, "bass": 0.0} if mode == "strip" else {}
         sec_g = 10 ** (-5.0 / 20.0) if mode == "soft" else 1.0
+        rel = [t - s["a_s"] for t in beats if s["a_s"] <= t < s["b_s"]]
+        p = _pump_gain(rel, n, PUMP_DEPTH)
+        seg_sum = np.zeros((2, n), dtype=np.float64)
         for name in ("drums", "bass", "other"):
             seg = stems_all[name][:, i0:i0 + n].copy() * stem_g.get(name, 1.0)
             if name == "other":
                 seg = np.stack([sosfiltfilt(sos_hp, c) for c in seg])
-            _declick(seg)
-            bed[:, o0:o0 + n] += seg * sec_g
+            seg_sum += seg
+        _declick(seg_sum)
+        # light pump on the low band only (the master's own pump survives)
+        lo = np.stack([sosfiltfilt(sos_lo2, c) for c in seg_sum])
+        seg_sum = lo * p + (seg_sum - lo) * np.sqrt(p)
+        bed[:, o0:o0 + n] += seg_sum * sec_g
 
     # ---- topline placement (donor's hot run, roles per section)
     placements = []
@@ -401,8 +429,9 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
                 o0, n = s_["out0"], s_["n"]
                 mix[:, o0:o0 + n] *= 10 ** (-trim / 20.0)
                 bed[:, o0:o0 + n] *= 10 ** (-trim / 20.0)
-    # master loudness: push into the limiter for reference-density output
-    master = _limiter(mix * 10 ** (4.0 / 20.0), SR)
+    # gentle limiting only — an overdriven limiter ducks every kick, which
+    # reads as an added pump on top of the master's own
+    master = _limiter(mix * 10 ** (1.5 / 20.0), SR)
     master = np.clip(master, -CEILING, CEILING).astype(np.float32)
 
     Path(out_wav).parent.mkdir(parents=True, exist_ok=True)
