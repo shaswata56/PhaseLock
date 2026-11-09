@@ -3,9 +3,9 @@
 *Live project state. Update at the end of every session. A new session starts
 by reading this file.*
 
-## Current state (2026-11-09 — v2.9)
+## Current state (2026-11-09 — v3.0)
 
-**Status: v1 + v2 + original-master hybrid mashup (v8) complete.**
+**Status: v1 + v2 + human-listening mashup (v9) complete.**
 
 **v2 delivered:**
 - Full real library: 110 tracks (98 of 99 Liked Songs; 1 unicode filename
@@ -119,6 +119,18 @@ topline); stems only where the topline masks the holes; added pump
 removed; gentle limiting. Vision A/B: v8 final ≈ 95% master quality.
 `renders/mashup_findyou_tiwifl_v8.mp3`. LESSON: never judge a re-synth
 against itself — A/B against the source master.
+
+**v3.0 (v9, after user pinpointed the gross = the two ORIGINAL-master
+sections):** built `rendering/human_listen.py` — whisper lyrics w/ word
+timestamps + vocal-collision detection (soup signature) + arrangement
+timeline. It read the v8 collision AS TEXT (whisper silence through the
+two-voice final; nothing at the singer-switch build). v9 = single-voice
+GUARANTEE by construction: stems-only bed everywhere (base's vocal stem
+excluded — a second voice cannot exist), synthesized builds (LP sweep
+250Hz→open + bass last-quarter entry + riser), topline +2dB.
+`renders/mashup_findyou_tiwifl_v9.mp3`. Limits stated: whisper-small is
+weak on sung EDM (words at low-bed moments only) — its power is
+collision detection, now structurally impossible.
 
 **Booth:** rebuilt + live at http://localhost:3100 (all v2 APIs verified:
 curves, preview 200/206, plan/edit, build).
