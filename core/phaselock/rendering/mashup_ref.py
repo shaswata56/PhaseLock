@@ -273,12 +273,12 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
     sos_hp = butter(4, OTHER_HP_HZ, btype="high", fs=SR, output="sos")
     bar_s = 4 * 60.0 / base_bpm
 
-    seq = [("groove", parts["groove"], "run", 4),
+    seq = [("groove", parts["groove"], "run", 2),
            ("build", parts["build"], None, 0),
-           ("drop1", parts["drop1"], "run", 4),
+           ("drop1", parts["drop1"], None, 0),   # the music's own moment
            ("break", parts["break"], "solo", 2),
            ("build", parts["build"], None, 0),
-           ("final", parts["final"], "callback", 6)]
+           ("final", parts["final"], "callback", 4)]  # hook enters late
 
     stems_all = {k: np.stack(list(base_st[k])).astype(np.float64)
                  for k in ("drums", "bass", "other")}
@@ -382,7 +382,7 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
         win_t, _L = (run.solo() if voc_role == "solo"
                      else run.take(s["n_phr"]))
         length_s = s["n"] / SR
-        entry_off = 4 * (4 * 60.0 / base_bpm) if s["role"] == "groove"             and s is secs[0] else 0.0
+        entry_off = {"groove": 4, "final": 8}.get(s["role"], 0)             * (4 * 60.0 / base_bpm) if s["role"] in ("groove", "final") else 0.0
         if entry_off and length_s - entry_off > 8.0:
             length_s -= entry_off
             o0_shift = int(entry_off * SR)
