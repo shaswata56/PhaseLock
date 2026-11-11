@@ -27,7 +27,7 @@ from .mashup import _VocalRun, _edge_fades, _riser, _warp
 
 SR = 44100
 OTHER_HP_HZ = 90.0      # melody stem leaves the sub to the bass stem
-VOCAL_OVER_DB = 2.0     # topline above the local bed RMS
+VOCAL_OVER_DB = 3.0     # topline above the local bed RMS
 PUMP_DEPTH = 0.10       # light glue only — the master already pumps
 PUMP_DEPTH_VOC = 0.08   # gentle pump on the topline
 PUMP_TAU_S = 0.135      # pump recovery time constant
@@ -173,8 +173,9 @@ def _plate_ir(sr: int = SR, seed: int = 4242) -> np.ndarray:
     return ir
 
 
-def _glue_vocal(v: np.ndarray, ir: np.ndarray) -> np.ndarray:
-    """HP + presence + plate reverb — the topline joins the bed's space."""
+def _glue_vocal(v: np.ndarray, ir: np.ndarray, bpm: float = 128.0) -> np.ndarray:
+    """The EDM topline chain: HP + presence, RMS compression (density),
+    tempo-synced 1/8 delay throws (the genre's vocal signature), plate."""
     from scipy.signal import butter, fftconvolve, sosfiltfilt
 
     out = np.zeros_like(v, dtype=np.float64)
@@ -185,6 +186,35 @@ def _glue_vocal(v: np.ndarray, ir: np.ndarray) -> np.ndarray:
     for ch in range(v.shape[0]):
         dry = sosfiltfilt(sos_hp, v[ch])
         out[ch] = dry + sosfiltfilt(sos_pk, dry) * pk_gain
+
+    # RMS compression: even the syllables, add density (4:1, ~10/120 ms)
+    hop = int(0.01 * SR)
+    nfr = out.shape[-1] // hop
+    env = np.sqrt((out[:, : nfr * hop].reshape(2, nfr, hop) ** 2
+                  ).mean(axis=(0, 2)) + 1e-18)
+    env = np.convolve(env, np.ones(12) / 12.0, mode="same")  # 120ms release
+    ref = float(np.percentile(env, 60)) + 1e-18
+    gain = np.clip(ref / env, 1.0, 4.0) ** 0.75  # soft-knee 4:1
+    gain = np.minimum.accumulate(np.maximum.accumulate(gain[::-1])[::-1])         if False else gain
+    g_full = np.repeat(gain, hop)
+    if g_full.size < out.shape[-1]:
+        g_full = np.concatenate([g_full,
+                                 np.full(out.shape[-1] - g_full.size, g_full[-1])])
+    out *= g_full[None, :]
+
+    # 1/8-note delay throws, HP'd, with feedback
+    d = int(60.0 / bpm / 2 * SR)
+    sos_dh = butter(2, 700.0, btype="high", fs=SR, output="sos")
+    thr = np.stack([sosfiltfilt(sos_dh, c) for c in out])
+    throws = np.zeros_like(out)
+    fb, w = 0.42, 1.0
+    for k in range(1, 7):
+        w *= fb
+        if k * d >= out.shape[-1]:
+            break
+        throws[:, k * d:] += thr[:, : -(k * d) or None] * w
+    out = out + throws * 10 ** (-11.0 / 20.0)
+
     wet = np.stack([fftconvolve(out[ch], ir[ch])[: out.shape[1]]
                     for ch in range(out.shape[0])])
     return out + wet * 10 ** (PLATE_WET_DB / 20.0)
@@ -321,7 +351,8 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
     _env = np.sqrt((_vm[:, : _nfr * _hop].reshape(2, _nfr, _hop) ** 2
                     ).mean(axis=(0, 2)) + 1e-18)
     _active = float(np.percentile(_env, 85)) + 1e-18
-    _gate = np.clip(_env / (0.30 * _active), 0.18, 1.0)
+    _gate = np.clip(_env / (0.20 * _active), 0.35, 1.0)
+    _gate = np.convolve(_gate, np.ones(4) / 4.0, mode="same")  # 200ms glide
     _gate = np.repeat(_gate, _hop)
     if _gate.size < _vm.shape[-1]:
         _gate = np.concatenate([_gate, np.full(_vm.shape[-1] - _gate.size, _gate[-1])])
@@ -475,7 +506,7 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
         o0, n = s["out0"], s["n"]
         pump[o0:o0 + n] = p[:n]
 
-    voc_mix = _glue_vocal(voc_mix, _plate_ir())
+    voc_mix = _glue_vocal(voc_mix, _plate_ir(), base_bpm)
     pump_v = 1.0 - (1.0 - pump) * (PUMP_DEPTH_VOC / PUMP_DEPTH)
     voc_mix *= pump_v
     act = _activity(voc_mix)
