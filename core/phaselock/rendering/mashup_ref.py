@@ -32,7 +32,7 @@ PUMP_DEPTH = 0.10       # light glue only — the master already pumps
 PUMP_DEPTH_VOC = 0.08   # gentle pump on the topline
 PUMP_TAU_S = 0.135      # pump recovery time constant
 DUCK_DB = 1.7           # bed dip under active vocal phrases
-PLATE_WET_DB = -16.0    # reverb wet level rel. dry topline
+PLATE_WET_DB = -24.0    # donor vocal is already wet — barely add any
 EDGE_S = 0.005          # de-click at phrase-aligned hard cuts
 
 
@@ -207,13 +207,13 @@ def _glue_vocal(v: np.ndarray, ir: np.ndarray, bpm: float = 128.0) -> np.ndarray
     sos_dh = butter(2, 700.0, btype="high", fs=SR, output="sos")
     thr = np.stack([sosfiltfilt(sos_dh, c) for c in out])
     throws = np.zeros_like(out)
-    fb, w = 0.42, 1.0
-    for k in range(1, 7):
+    fb, w = 0.32, 1.0
+    for k in range(1, 4):
         w *= fb
         if k * d >= out.shape[-1]:
             break
         throws[:, k * d:] += thr[:, : -(k * d) or None] * w
-    out = out + throws * 10 ** (-11.0 / 20.0)
+    out = out + throws * 10 ** (-15.0 / 20.0)
 
     wet = np.stack([fftconvolve(out[ch], ir[ch])[: out.shape[1]]
                     for ch in range(out.shape[0])])
