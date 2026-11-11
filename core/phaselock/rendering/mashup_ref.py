@@ -313,6 +313,25 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
                     don_side.get("downbeat_phase"))
     rho_d = don_bpm / base_bpm
 
+    # soft bleed gate: demucs vocals stems carry instrumental ghost in the
+    # gaps — duck frames far under the active level so phrases start clean
+    _vm = don_st["vocals"].astype(np.float64)
+    _hop = int(0.05 * SR)
+    _nfr = _vm.shape[-1] // _hop
+    _env = np.sqrt((_vm[:, : _nfr * _hop].reshape(2, _nfr, _hop) ** 2
+                    ).mean(axis=(0, 2)) + 1e-18)
+    _active = float(np.percentile(_env, 85)) + 1e-18
+    _gate = np.clip(_env / (0.30 * _active), 0.18, 1.0)
+    _gate = np.repeat(_gate, _hop)
+    if _gate.size < _vm.shape[-1]:
+        _gate = np.concatenate([_gate, np.full(_vm.shape[-1] - _gate.size, _gate[-1])])
+    _vm *= _gate[None, :]
+    don_st = dict(don_st)
+    don_st["vocals"] = _vm
+    run = _VocalRun(don_st["vocals"], don_side.get("beats", []),
+                    don_side.get("downbeat_phase"))
+    run.cursor = run.best_entry()
+
     secs: list[dict] = []
     out_t = 0.0
     for role, (part, mode), voc_role, n_phr in seq:

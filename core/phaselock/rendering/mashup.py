@@ -194,6 +194,29 @@ class _VocalRun:
                else s0 + 2 * 16 * 60 / 128.0)
         return s0, max(2.0, end - s0)
 
+    def best_entry(self) -> int:
+        """Index (into the run) of the phrase with the sharpest real onset:
+        quiet before, strong and sustained after. The run's first phrase can
+        start mid-verse (singing already underway) — entries must begin on
+        a breath."""
+        best_i, best_score = 0, -1e9
+        for k, i in enumerate(self.run):
+            t = self.starts[i]
+            i0 = max(0, int((t - 0.35) * SR / self.hop / 0.25 * 0.25))
+            a = int((t - 0.35) / self.hop)
+            b = int(t / self.hop)
+            c = int((t + 0.6) / self.hop)
+            if a < 0 or c >= self.rms.size:
+                continue
+            pre = float(self.rms[a:b].mean())
+            post = float(self.rms[b:c].mean())
+            if post < self.rms.mean() * 0.5:
+                continue  # not a strong phrase head
+            score = 10 * np.log10((post + 1e-18) / (pre + 1e-18))
+            if score > best_score:
+                best_score, best_i = score, k
+        return best_i
+
     def rewind(self) -> None:
         self.cursor = 0
 
