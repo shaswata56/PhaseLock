@@ -203,6 +203,30 @@ def _activity(x: np.ndarray) -> np.ndarray:
     return e
 
 
+def _snap_to_onset(mono: np.ndarray, win_t: float, sr: int = SR,
+                   lookback: float = 2.2, preroll: float = 0.08) -> float:
+    """Move a phrase window start back to the latest real vocal onset
+    (energy dip) before the grid point — the 16-beat grid can land mid-word."""
+    hop = int(0.05 * sr)
+    i0 = max(0, int((win_t - lookback) * sr))
+    i1 = min(mono.size, int((win_t + 0.3) * sr))
+    if i1 - i0 < 4 * hop:
+        return win_t
+    r = np.sqrt(np.convolve(mono[i0:i1] ** 2, np.ones(hop) / hop, "same")
+                + 1e-18)
+    ref = float(r[min(int((win_t) * sr) - i0 + hop, r.size - 1)])
+    lo, hi = int(0.15 / 0.05), int((lookback) / 0.05)
+    zone = r[max(0, r.size - hi - 6): r.size - lo]
+    if zone.size < 4:
+        return win_t
+    j = int(np.argmin(zone))  # latest deep dip in the lookback zone
+    dip_level = float(zone[j])
+    if dip_level > ref * 10 ** (-6 / 20) and ref > 0:
+        return win_t  # no clear breath — trust the grid
+    t_dip = (i1 - (zone.size - j) * hop) / sr
+    return max(0.0, t_dip - preroll)
+
+
 def role_of(s: dict) -> str:
     return s["role"]
 
@@ -381,6 +405,8 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
             run.rewind()
         win_t, _L = (run.solo() if voc_role == "solo"
                      else run.take(s["n_phr"]))
+        _dmono = don_st["vocals"].mean(axis=0)             if don_st["vocals"].ndim > 1 else don_st["vocals"]
+        win_t = _snap_to_onset(_dmono, float(win_t))
         length_s = s["n"] / SR
         entry_off = {"groove": 4, "final": 8}.get(s["role"], 0)             * (4 * 60.0 / base_bpm) if s["role"] in ("groove", "final") else 0.0
         if entry_off and length_s - entry_off > 8.0:
@@ -398,7 +424,16 @@ def render_mashup_ref(base_path: str, donor_path: str, out_wav: str,
             seg = _warp(list(don_st["vocals"]), rho_d,
                         int(length_s * SR) + 1,
                         src_start=int(round(win_t * SR)))
-        _edge_fades(seg)
+        if not placements:  # first entry: lean in, don't slam
+            fi = min(int(0.35 * SR), seg.shape[-1] // 3)
+            seg[:, :fi] *= np.linspace(0.0, 1.0, fi) ** 0.6
+            swell = min(int(1.5 * SR), seg.shape[-1])
+            seg[:, :swell] *= (0.5 + 0.5 * np.linspace(0, 1, swell)) [None, :]                 if seg.ndim > 1 else (0.5 + 0.5 * np.linspace(0, 1, swell))
+            _edge_fades(seg[:, fi:]) if False else None
+            fo = min(int(0.05 * SR), seg.shape[-1] // 2)
+            seg[:, -fo:] *= np.linspace(1, 0, fo)
+        else:
+            _edge_fades(seg)
         o0, n = s["out0"], s["n"]
         if entry_off and length_s > 8.0:
             o0 += o0_shift  # groove plays 4 bars before the topline enters
